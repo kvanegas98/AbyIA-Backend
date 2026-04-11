@@ -1,0 +1,47 @@
+# ── Build output ────────────────────────────────────────────────────────────
+bin/
+obj/
+out/
+publish/
+
+# ── Visual Studio ────────────────────────────────────────────────────────────
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+.idea/
+
+# ── NuGet ────────────────────────────────────────────────────────────────────
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ── Test results ─────────────────────────────────────────────────────────────
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# ── ⚠️  CREDENCIALES — NUNCA subir estos archivos ────────────────────────────
+appsettings.json
+appsettings.*.json
+credentials/
+secrets/
+*.pfx
+*.p12
+*.key
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+.claude/
+
+# ── Logs y archivos temporales ───────────────────────────────────────────────
+*.log
+logs/
+Thumbs.db
+.DS_Store

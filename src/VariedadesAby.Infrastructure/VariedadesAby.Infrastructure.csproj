@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <!-- Módulo FTP → Google Drive -->
+    <PackageReference Include="FluentFTP" Version="51.0.0" />
+    <PackageReference Include="Google.Apis.Drive.v3" Version="1.68.0.3625" />
+    <PackageReference Include="MailKit" Version="4.11.0" />
+    <PackageReference Include="CloudinaryDotNet" Version="1.26.2" />
+    <PackageReference Include="Dapper" Version="2.1.35" />
+    <PackageReference Include="Google.GenAI" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+    <PackageReference Include="PDFtoImage" Version="4.0.0" />
+    <PackageReference Include="QuestPDF" Version="2024.10.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VariedadesAby.Core\VariedadesAby.Core.csproj" />
+  </ItemGroup>
+
+</Project>
