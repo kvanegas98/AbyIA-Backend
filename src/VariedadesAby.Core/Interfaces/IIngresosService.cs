@@ -10,4 +10,5 @@ public interface IIngresosService
     Task<byte[]> GenerarPdfAsync(int idIngreso);
     Task<PagedResult<AnalisisInventarioProveedorDto>> AnalisisInventarioPorProveedorAsync(FiltroAnalisisProveedorViewModel filtro);
     Task<PagedResult<AnalisisProveedorDetalleDto>> AnalisisDetalleProveedorAsync(int idProveedor, FiltroAnalisisProveedorViewModel filtro);
+    Task<bool> AnularAsync(int idIngreso);
 }

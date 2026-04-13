@@ -38,6 +38,21 @@ public class IngresosService : IIngresosService
                     "SELECT idarticulo FROM articulo WITH (NOLOCK) WHERE idarticulo = @id",
                     new { id = detalle.idarticulo }, transaction);
 
+                // FAIL-SAFE: Si viene como nuevo (id=0), buscamos por código una última vez
+                // para evitar crear duplicados bajo NINGUNA circunstancia.
+                if (idExistente is null && !string.IsNullOrWhiteSpace(detalle.codigo))
+                {
+                    var idPorCodigo = await _db.QueryFirstOrDefaultAsync<int?>(
+                        "SELECT idarticulo FROM articulo WITH (NOLOCK) WHERE RTRIM(codigo) = @codigo",
+                        new { codigo = detalle.codigo.Trim() }, transaction);
+
+                    if (idPorCodigo.HasValue)
+                    {
+                        idExistente = idPorCodigo;
+                        detalle.idarticulo = idPorCodigo.Value;
+                    }
+                }
+
                 if (idExistente is null)
                 {
                     // Artículo nuevo → insertar y recuperar ID generado por la BD
@@ -209,6 +224,70 @@ public class IngresosService : IIngresosService
 
             transaction.Commit();
             return (idIngreso, model.num_comprobante);
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    public async Task<bool> AnularAsync(int idIngreso)
+    {
+        if (_db.State != ConnectionState.Open)
+            _db.Open();
+
+        using var transaction = _db.BeginTransaction();
+        try
+        {
+            var ingreso = await _db.QueryFirstOrDefaultAsync<dynamic>(
+                "SELECT estado, IdSucursal FROM ingreso WITH (UPDLOCK) WHERE idingreso = @id",
+                new { id = idIngreso }, transaction);
+
+            if (ingreso == null)
+                throw new NotFoundException($"No se encontró la compra con ID {idIngreso}");
+
+            if (((string)ingreso.estado).Equals("ANULADO", StringComparison.OrdinalIgnoreCase))
+                throw new IngresoException("La compra ya se encuentra anulada.");
+
+            var idSucursalEfectivo = (int)(ingreso.IdSucursal ?? 1);
+            if (idSucursalEfectivo == 0) idSucursalEfectivo = 1;
+
+            var detalles = await _db.QueryAsync<dynamic>(
+                @"SELECT d.idarticulo, d.cantidad, a.nombre, ISNULL(s.stock, 0) as stockActual
+                  FROM detalle_ingreso d WITH (NOLOCK)
+                  INNER JOIN articulo a WITH (NOLOCK) ON a.idarticulo = d.idarticulo
+                  LEFT JOIN sucursalArticulo s WITH (UPDLOCK) ON s.idarticulo = d.idarticulo AND s.idsucursal = @idSucursal
+                  WHERE d.idingreso = @idIngreso",
+                new { idIngreso, idSucursal = idSucursalEfectivo }, transaction);
+
+            // 1. Validar estrictamente el stock
+            foreach (var detalle in detalles)
+            {
+                if (detalle.stockActual < detalle.cantidad)
+                {
+                    throw new IngresoException($"No se puede anular. El artículo '{detalle.nombre}' ingresó {detalle.cantidad} unidades, pero el stock actual en esta sucursal es solo de {detalle.stockActual}. Ya tiene ventas o traslados.");
+                }
+            }
+
+            // 2. Restar stock
+            foreach (var detalle in detalles)
+            {
+                await _db.ExecuteAsync(
+                    @"UPDATE sucursalArticulo
+                         SET stock = stock - @cantidad
+                       WHERE idarticulo = @idarticulo AND idsucursal = @idsucursal",
+                    new { cantidad = (int)detalle.cantidad, idarticulo = (int)detalle.idarticulo, idsucursal = idSucursalEfectivo },
+                    transaction);
+            }
+
+            // 3. Cambiar estado a ANULADO
+            await _db.ExecuteAsync(
+                "UPDATE ingreso SET estado = 'ANULADO' WHERE idingreso = @id",
+                new { id = idIngreso }, transaction);
+
+            transaction.Commit();
+            return true;
         }
         catch
         {

@@ -28,8 +28,7 @@ public class ComprasPdfController : ControllerBase
         [FromForm] IFormFile archivo,
         [FromForm] int idProveedor,
         [FromForm] int idUsuario,
-        [FromForm] int idSucursal,
-        [FromForm] decimal tipoCambio)
+        [FromForm] int idSucursal)
     {
         if (archivo is null || archivo.Length == 0)
             return BadRequest(new { mensaje = "Debe adjuntar un archivo PDF." });
@@ -48,10 +47,29 @@ public class ComprasPdfController : ControllerBase
         if (System.Text.Encoding.ASCII.GetString(buffer) != "%PDF-")
             return BadRequest(new { mensaje = "El archivo no es un PDF válido." });
 
-        if (tipoCambio <= 0)
-            return BadRequest(new { mensaje = "El tipo de cambio debe ser mayor a 0." });
+        try
+        {
+            var resultado = await _service.AnalizarPdfAsync(archivo.OpenReadStream(), idProveedor, idUsuario, idSucursal);
+            return Ok(resultado);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+    }
 
-        var resultado = await _service.AnalizarPdfAsync(archivo.OpenReadStream(), idProveedor, idUsuario, idSucursal, tipoCambio);
+    /// <summary>
+    /// Verifica si un artículo existe en la BD por su código.
+    /// Retorna esNuevo=true si no se encuentra.
+    /// </summary>
+    // GET: api/ComprasPdf/ValidarArticulo?codigo=ABC123
+    [HttpGet("[action]")]
+    public async Task<IActionResult> ValidarArticulo([FromQuery] string codigo)
+    {
+        if (string.IsNullOrWhiteSpace(codigo))
+            return BadRequest(new { mensaje = "El código no puede estar vacío." });
+
+        var resultado = await _service.ValidarArticuloAsync(codigo);
         return Ok(resultado);
     }
 }

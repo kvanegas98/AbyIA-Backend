@@ -19,8 +19,12 @@ public class ComprasPdfService : IComprasPdfService
     private readonly IDbConnection _dbConnection;
     private readonly Client _geminiClient;
     private readonly string _modelo;
+    private readonly string _modeloFallback;
     private readonly Cloudinary _cloudinary;
     private readonly ILogger<ComprasPdfService> _logger;
+
+    private const int MAX_RETRIES = 3;
+    private const int INITIAL_DELAY_MS = 3000;
 
     public ComprasPdfService(
         IDbConnection dbConnection,
@@ -35,6 +39,8 @@ public class ComprasPdfService : IComprasPdfService
         _modelo = configuration["GeminiAI:ModeloPdf"]
             ?? configuration["GeminiAI:Modelo"]
             ?? "gemini-2.5-pro";
+        _modeloFallback = configuration["GeminiAI:ModeloFallback"]
+            ?? "gemini-2.0-flash";
         _geminiClient = new Client(apiKey: apiKey, httpOptions: new HttpOptions
         {
             Timeout = (int)TimeSpan.FromMinutes(5).TotalMilliseconds
@@ -51,7 +57,7 @@ public class ComprasPdfService : IComprasPdfService
     }
 
     public async Task<AnalizarPdfResponseDto> AnalizarPdfAsync(
-        Stream pdfStream, int idProveedor, int idUsuario, int idSucursal, decimal tipoCambio)
+        Stream pdfStream, int idProveedor, int idUsuario, int idSucursal)
     {
         // 1. Leer bytes del PDF
         using var ms = new MemoryStream();
@@ -66,12 +72,13 @@ public class ComprasPdfService : IComprasPdfService
 
         // 3 + 4. Cloudinary y Gemini en paralelo — ahorran el tiempo de subida
         var cloudinaryTask = SubirImagenesACloudinaryAsync(imagenesBytes);
-        var geminiTask     = EjecutarConReintentoAsync(() => ExtraerDatosConGeminiAsync(pdfBytes));
+        var geminiTask     = EjecutarConReintentoAsync((modelo) => ExtraerDatosConGeminiAsync(pdfBytes, modelo));
 
         await Task.WhenAll(cloudinaryTask, geminiTask);
 
-        var urlsCloudinary                      = cloudinaryTask.Result;
-        var (compraExtraida, proveedorDetectado) = geminiTask.Result;
+        var urlsCloudinary = cloudinaryTask.Result;
+        var (resultado, modeloUsado) = geminiTask.Result;
+        var (compraExtraida, proveedorDetectado) = resultado;
 
         // 4.1 Agrupar productos repetidos (mismo código y precio) para consolidar cantidades
         compraExtraida.detalles = AgruparDetalles(compraExtraida.detalles);
@@ -82,10 +89,7 @@ public class ComprasPdfService : IComprasPdfService
         // 5. Validar cada artículo contra la BD (por código y por código de barras como fallback)
         await ValidarArticulosAsync(compraExtraida.detalles);
 
-        // 6. Convertir precios de USD a Córdobas
-        AplicarTipoCambio(compraExtraida, tipoCambio);
-
-        // 7. Completar datos del contexto (proveedor, usuario, sucursal)
+        // 6. Completar datos del contexto (proveedor, usuario, sucursal)
         compraExtraida.idproveedor = idProveedor;
         compraExtraida.idusuario = idUsuario;
         compraExtraida.idSucursal = idSucursal;
@@ -95,7 +99,8 @@ public class ComprasPdfService : IComprasPdfService
             compra               = compraExtraida,
             urlsImagenesCloudinary = urlsCloudinary,
             proveedorDetectado   = proveedorDetectado,
-            advertencias         = advertencias
+            advertencias         = advertencias,
+            modeloUsado          = modeloUsado
         };
     }
 
@@ -160,9 +165,9 @@ public class ComprasPdfService : IComprasPdfService
 
     // ─── Gemini Vision ───────────────────────────────────────────────────────
 
-    private async Task<(CompraExtraidaDto compra, string? proveedor)> ExtraerDatosConGeminiAsync(byte[] pdfBytes)
+    private async Task<(CompraExtraidaDto compra, string? proveedor)> ExtraerDatosConGeminiAsync(byte[] pdfBytes, string modelo)
     {
-        _logger.LogInformation("Enviando el PDF completo de forma nativa a Gemini ({Modelo})...", _modelo);
+        _logger.LogInformation("Enviando el PDF completo de forma nativa a Gemini ({Modelo})...", modelo);
 
         const string prompt = """
             Eres un extractor experto de facturas de proveedor. Analiza este PDF y extrae TODOS los productos.
@@ -247,7 +252,7 @@ public class ComprasPdfService : IComprasPdfService
         };
 
         var response = await _geminiClient.Models.GenerateContentAsync(
-            model: _modelo,
+            model: modelo,
             contents: new List<Content> { new Content { Role = "user", Parts = parts } },
             config: config
         );
@@ -311,6 +316,31 @@ public class ComprasPdfService : IComprasPdfService
         }
     }
 
+    // ─── Validar artículo individual por código ──────────────────────────────
+
+    public async Task<ValidarArticuloDto> ValidarArticuloAsync(string codigo)
+    {
+        var articulo = await _dbConnection.QueryFirstOrDefaultAsync<ArticuloDto>(
+            @"SELECT idarticulo, nombre, RTRIM(codigo) AS codigo, idcategoria, precio_venta, precio_compra
+                FROM dbo.articulo WITH (NOLOCK)
+               WHERE RTRIM(codigo) = @codigo",
+            new { codigo = codigo.Trim() });
+
+        if (articulo is null)
+            return new ValidarArticuloDto { EsNuevo = true };
+
+        return new ValidarArticuloDto
+        {
+            EsNuevo      = false,
+            IdArticulo   = articulo.IdArticulo,
+            Nombre       = articulo.Nombre,
+            Codigo       = articulo.Codigo,
+            IdCategoria  = articulo.IdCategoria,
+            PrecioVenta  = articulo.PrecioVenta,
+            PrecioCompra = articulo.PrecioCompra
+        };
+    }
+
     // ─── Validación de artículos contra la BD ────────────────────────────────
 
     private async Task ValidarArticulosAsync(List<DetalleCompraExtraidoDto> detalles)
@@ -323,18 +353,21 @@ public class ComprasPdfService : IComprasPdfService
 
         if (codigos.Count == 0) return;
 
+        // RTRIM previene falsos negativos por espacios almacenados en la BD
         var articulos = (await _dbConnection.QueryAsync<ArticuloDto>(
-            @"SELECT a.idarticulo, a.nombre, a.codigo, a.idcategoria, a.precio_venta
+            @"SELECT a.idarticulo, a.nombre, RTRIM(a.codigo) AS codigo, a.idcategoria, a.precio_venta
                 FROM articulo a WITH (NOLOCK)
-               WHERE a.codigo IN @codigos",
+               WHERE RTRIM(a.codigo) IN @codigos",
             new { codigos }))
-            .ToDictionary(a => a.Codigo ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(a => (a.Codigo ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var detalle in detalles)
         {
             if (string.IsNullOrWhiteSpace(detalle.codigo)) continue;
 
-            if (articulos.TryGetValue(detalle.codigo.Trim(), out var encontrado))
+            var codigoLimpio = detalle.codigo.Trim();
+            if (articulos.TryGetValue(codigoLimpio, out var encontrado))
             {
                 detalle.idarticulo   = encontrado.IdArticulo;
                 detalle.idCategoria  = encontrado.IdCategoria;
@@ -357,10 +390,13 @@ public class ComprasPdfService : IComprasPdfService
 
         int factor = u switch
         {
-            "DOC" or "DOCENA" or "DZ" or "DOZEN" => 12,
-            "PAR" or "PR"                          => 2,
-            "GRUESA"                               => 144,
-            _                                      => 1
+            "DOC" or "DOCENA" or "DOCENAS"
+                 or "DOZ" or "DZ" or "DOZEN"
+                 or "DS" or "DZN"              => 12,
+            "PAR" or "PR" or "PARES"           => 2,
+            "GRUESA" or "GR" or "GROSS"        => 144,
+            "MEDIA DOCENA" or "1/2 DOC"        => 6,
+            _                                  => 1
         };
 
         var result = (int)Math.Round(cantidad * factor);
@@ -386,23 +422,6 @@ public class ComprasPdfService : IComprasPdfService
             .ToList();
     }
 
-    // ─── Conversión de moneda ────────────────────────────────────────────────
-
-    private static void AplicarTipoCambio(CompraExtraidaDto compra, decimal tipoCambio)
-    {
-        if (tipoCambio <= 0) tipoCambio = 1;
-
-        foreach (var detalle in compra.detalles)
-        {
-            detalle.precio = Math.Round(detalle.precio * tipoCambio, 2);
-
-            if (detalle.precio_venta.HasValue)
-                detalle.precio_venta = Math.Round(detalle.precio_venta.Value * tipoCambio, 2);
-        }
-
-        compra.total = Math.Round(compra.total * tipoCambio, 2);
-    }
-
     // ─── Validación de coherencia numérica ──────────────────────────────────
 
     private List<string> ValidarCoherenciaTotales(CompraExtraidaDto compra)
@@ -426,30 +445,89 @@ public class ComprasPdfService : IComprasPdfService
         return advertencias;
     }
 
-    // ─── Reintentos ante errores 429 ─────────────────────────────────────────
+    // ─── Reintentos con degradación gradual de modelos (calidad primero) ────
 
-    private async Task<T> EjecutarConReintentoAsync<T>(Func<Task<T>> funcion)
+    private async Task<(T valor, string modeloUsado)> EjecutarConReintentoAsync<T>(Func<string, Task<T>> funcion)
     {
-        int delay = 2000;
-        for (int intento = 1; intento <= 3; intento++)
+        // PDF requiere máxima precisión → priorizar modelo premium con más intentos.
+        // Cadena de degradación gradual:
+        //   gemini-2.5-pro  (4 intentos) → mejor calidad, puede estar saturado
+        //   gemini-2.5-flash (3 intentos) → buena calidad, alta disponibilidad
+        //   gemini-2.0-flash (2 intentos) → último recurso, calidad aceptable
+        var cadenaModelos = new (string modelo, int maxIntentos)[]
+        {
+            (_modelo, 4),
+            ("gemini-2.5-flash", 3),
+            ("gemini-2.0-flash", 2)
+        };
+
+        // Deduplicar por si _modelo ya es uno de los fallback
+        var modelosUsados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Exception? ultimaExcepcion = null;
+
+        foreach (var (modelo, maxIntentos) in cadenaModelos)
+        {
+            if (!modelosUsados.Add(modelo)) continue; // ya se intentó
+
+            var resultado = await IntentarConModeloAsync(funcion, modelo, maxIntentos);
+            if (resultado.Exito)
+            {
+                if (modelo != _modelo)
+                    _logger.LogWarning("[PDF] Extracción con modelo de respaldo '{Modelo}'. La precisión podría variar.", modelo);
+                else
+                    _logger.LogInformation("[PDF] Extracción exitosa con modelo principal '{Modelo}'.", modelo);
+                return (resultado.Valor!, modelo);
+            }
+
+            ultimaExcepcion = resultado.Excepcion;
+            _logger.LogWarning(
+                "[PDF] Modelo '{Modelo}' falló tras {Max} intentos. Probando siguiente...",
+                modelo, maxIntentos);
+        }
+
+        throw ultimaExcepcion ?? new InvalidOperationException("Todos los modelos de Gemini fallaron al procesar el PDF.");
+    }
+
+    private async Task<(bool Exito, T? Valor, Exception? Excepcion)> IntentarConModeloAsync<T>(
+        Func<string, Task<T>> funcion, string modelo, int maxIntentos)
+    {
+        int delay = INITIAL_DELAY_MS;
+
+        for (int i = 1; i <= maxIntentos; i++)
         {
             try
             {
-                return await funcion();
+                return (true, await funcion(modelo), null);
             }
-            catch (Exception ex) when (
-                ex.Message.Contains("Resource exhausted", StringComparison.OrdinalIgnoreCase) ||
-                ex.Message.Contains("429") ||
-                ex.Message.Contains("Too Many Requests", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (IsRetryable(ex))
             {
-                if (intento == 3) throw;
-                _logger.LogWarning("Gemini 429 en AnalizarPdf. Reintentando en {Delay}ms... ({Intento}/3)", delay, intento);
+                if (i == maxIntentos)
+                    return (false, default, ex);
+
+                _logger.LogWarning(
+                    "[PDF] '{Modelo}' sobrecargado. Reintentando en {Delay}ms ({I}/{Max}). Error: {Msg}",
+                    modelo, delay, i, maxIntentos, ex.Message);
                 await Task.Delay(delay);
                 delay *= 2;
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("[PDF] Error no reintentable en '{Modelo}': {Msg}", modelo, ex.Message);
+                return (false, default, ex);
+            }
         }
-        throw new InvalidOperationException("Código inalcanzable en reintentos PDF");
+
+        return (false, default, new InvalidOperationException("Código inalcanzable"));
     }
+
+    private static bool IsRetryable(Exception ex) =>
+        ex.Message.Contains("Resource exhausted", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("429")
+        || ex.Message.Contains("Too Many Requests", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("Quota exceeded", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("high demand", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("overloaded", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("503");
 
     // ─── DTOs internos ───────────────────────────────────────────────────────
 
@@ -484,5 +562,6 @@ public class ComprasPdfService : IComprasPdfService
         public int? IdCategoria { get; set; }
         public string? NombreCategoria { get; set; }
         public decimal? PrecioVenta { get; set; }
+        public decimal? PrecioCompra { get; set; }
     }
 }

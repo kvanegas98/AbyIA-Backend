@@ -32,14 +32,14 @@ public class VendedoresService : IVendedoresService
             SELECT
                 u.idusuario                                                                AS IdUsuario,
                 u.nombre                                                                   AS Nombre,
-                -- Contado
-                ISNULL(SUM(CASE WHEN ab.Id_Venta IS NULL THEN v.total  ELSE 0 END), 0)    AS TotalContado,
-                ISNULL(SUM(CASE WHEN ab.Id_Venta IS NULL THEN 1        ELSE 0 END), 0)    AS VentasContado,
-                -- Crédito
-                ISNULL(SUM(CASE WHEN ab.Id_Venta IS NOT NULL THEN v.total  ELSE 0 END), 0) AS TotalCredito,
-                ISNULL(SUM(CASE WHEN ab.Id_Venta IS NOT NULL THEN 1        ELSE 0 END), 0) AS VentasCredito,
+                -- Contado: ventas sin cuenta de crédito asociada (IdCredito IS NULL)
+                ISNULL(SUM(CASE WHEN v.IdCredito IS NULL THEN v.total - v.impuesto  ELSE 0 END), 0)    AS TotalContado,
+                ISNULL(SUM(CASE WHEN v.IdCredito IS NULL THEN 1                     ELSE 0 END), 0)    AS VentasContado,
+                -- Crédito: ventas vinculadas a una cuenta de crédito (IdCredito IS NOT NULL)
+                ISNULL(SUM(CASE WHEN v.IdCredito IS NOT NULL THEN v.total - v.impuesto  ELSE 0 END), 0) AS TotalCredito,
+                ISNULL(SUM(CASE WHEN v.IdCredito IS NOT NULL THEN 1                     ELSE 0 END), 0) AS VentasCredito,
                 -- Totales
-                ISNULL(SUM(v.total),    0) AS Total,
+                ISNULL(SUM(v.total - v.impuesto), 0) AS Total,
                 COUNT(v.idventa)           AS TotalVentas,
                 ISNULL(SUM(v.utilidad), 0) AS Utilidad
             FROM dbo.usuario u WITH (NOLOCK)
@@ -48,13 +48,9 @@ public class VendedoresService : IVendedoresService
                 AND v.estado     != 'Anulado'
                 AND v.fecha_hora >= @FechaInicio
                 AND v.fecha_hora <  @FechaFin
-            LEFT JOIN (
-                SELECT DISTINCT Id_Venta
-                FROM dbo.abono WITH (NOLOCK)
-            ) ab ON ab.Id_Venta = v.idventa
             WHERE u.condicion = 1
             GROUP BY u.idusuario, u.nombre
-            HAVING SUM(v.total) > 0
+            HAVING SUM(v.total - v.impuesto) > 0
             ORDER BY Total DESC;";
 
         var vendedores = (await _db.QueryAsync<VendedorResumenDto>(sql, p)).ToList();

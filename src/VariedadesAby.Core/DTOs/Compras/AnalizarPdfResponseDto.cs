@@ -1,11 +1,23 @@
 namespace VariedadesAby.Core.DTOs.Compras;
 
+public class ValidarArticuloDto
+{
+    public bool     EsNuevo      { get; init; }
+    public int      IdArticulo   { get; init; }
+    public string?  Nombre       { get; init; }
+    public string?  Codigo       { get; init; }
+    public int?     IdCategoria  { get; init; }
+    public decimal? PrecioVenta  { get; init; }
+    public decimal? PrecioCompra { get; init; }
+}
+
 public class AnalizarPdfResponseDto
 {
     public CompraExtraidaDto compra { get; set; } = new();
     public List<string> urlsImagenesCloudinary { get; set; } = new();
     public string? proveedorDetectado { get; set; }
     public List<string> advertencias { get; set; } = new();
+    public string? modeloUsado { get; set; }
 }
 
 /// <summary>

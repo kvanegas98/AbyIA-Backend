@@ -22,15 +22,18 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
     ];
 
     private readonly GoogleDriveSettings _settings;
+    private readonly FtpSettings _ftpSettings;
     private readonly SchedulerSettings _schedulerSettings;
     private readonly ILogger<GoogleDriveIntegrationService> _logger;
 
     public GoogleDriveIntegrationService(
         IOptions<GoogleDriveSettings> settings,
+        IOptions<FtpSettings> ftpSettings,
         IOptions<SchedulerSettings> schedulerSettings,
         ILogger<GoogleDriveIntegrationService> logger)
     {
         _settings = settings.Value;
+        _ftpSettings = ftpSettings.Value;
         _schedulerSettings = schedulerSettings.Value;
         _logger = logger;
     }
@@ -86,6 +89,78 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
             uploaded.Name, uploaded.Id, uploaded.Size);
 
         return (uploaded.Id, false);
+    }
+
+    public async Task<EstadoBackupDto> ObtenerEstadoBackupAsync(CancellationToken ct = default)
+    {
+        var now = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
+        var archivoHoy = _ftpSettings.FileNamePattern
+            .Replace("{M}",    now.Month.ToString())
+            .Replace("{d}",    now.Day.ToString())
+            .Replace("{yyyy}", now.Year.ToString());
+
+        UserCredential credential;
+        try
+        {
+            credential = await GetUserCredentialAsync(ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new EstadoBackupDto { DriveAutorizado = false, ArchivoHoy = archivoHoy };
+        }
+
+        try
+        {
+            using var service = new DriveService(new BaseClientService.Initializer
+            {
+                HttpClientInitializer = credential,
+                ApplicationName = _settings.ApplicationName
+            });
+
+            // ── Último .bak subido (sin restricción de carpeta — in ancestors no existe en Drive API v3) ──
+            var lastReq = service.Files.List();
+            lastReq.Q = "mimeType != 'application/vnd.google-apps.folder' " +
+                        "AND name contains '.bak' " +
+                        "AND trashed=false";
+            lastReq.Fields  = "files(id, name, createdTime)";
+            lastReq.OrderBy = "createdTime desc";
+            lastReq.PageSize = 1;
+
+            var lastResult = await lastReq.ExecuteAsync(ct);
+            var lastFile   = lastResult.Files.FirstOrDefault();
+
+            // ── ¿Existe ya el archivo de hoy? ─────────────────────────────────────
+            var todayReq = service.Files.List();
+            todayReq.Q = $"name='{archivoHoy}' AND trashed=false";
+            todayReq.Fields   = "files(id)";
+            todayReq.PageSize = 1;
+
+            var todayResult = await todayReq.ExecuteAsync(ct);
+            var yaExisteHoy = todayResult.Files.Count > 0;
+
+            DateTime? fechaSubidaLocal = null;
+            if (lastFile?.CreatedTimeDateTimeOffset is { } createdOffset)
+            {
+                var tz = TimeZoneHelper.Resolve(_schedulerSettings.TimeZoneId);
+                fechaSubidaLocal = TimeZoneInfo.ConvertTimeFromUtc(createdOffset.UtcDateTime, tz);
+            }
+
+            return new EstadoBackupDto
+            {
+                DriveAutorizado  = true,
+                ArchivoHoy       = archivoHoy,
+                YaExisteHoy      = yaExisteHoy,
+                UltimoArchivo    = lastFile?.Name,
+                DriveFileId      = lastFile?.Id,
+                FechaSubidaUtc   = lastFile?.CreatedTimeDateTimeOffset?.UtcDateTime,
+                FechaSubidaLocal = fechaSubidaLocal
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "[Drive] Error al consultar estado del backup.");
+            return new EstadoBackupDto { DriveAutorizado = false, ArchivoHoy = archivoHoy };
+        }
     }
 
     /// <summary>

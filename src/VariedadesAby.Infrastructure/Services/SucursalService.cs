@@ -221,25 +221,32 @@ public class SucursalService : ISucursalService
     public async Task<IEnumerable<TopCapitalInmovilizadoDto>> GetTopCapitalInmovilizadoAsync()
     {
         const string sql = @"
+            WITH StockAgrupado AS (
+                SELECT idarticulo, SUM(stock) as stockTotal
+                FROM dbo.sucursalArticulo WITH (NOLOCK)
+                GROUP BY idarticulo
+                HAVING SUM(stock) > 0
+            ),
+            UltimaVenta AS (
+                SELECT dv.idarticulo, MAX(v.fecha_hora) as UltimaFecha
+                FROM dbo.detalle_venta dv WITH (NOLOCK)
+                JOIN dbo.venta v WITH (NOLOCK) ON v.idventa = dv.idventa
+                WHERE v.estado != 'Anulado'
+                GROUP BY dv.idarticulo
+            )
             SELECT TOP 10
                 a.codigo,
-                a.nombre                                        AS articulo,
-                ISNULL(cat.nombre, 'Sin categoría')            AS categoria,
-                SUM(sa.stock)                                   AS stockTotal,
-                a.precio_compra                                 AS precioCompra,
-                ROUND(SUM(sa.stock) * a.precio_compra, 2)       AS valorCosto,
-                DATEDIFF(DAY,
-                    MAX(v.fecha_hora),
-                    GETDATE())                                  AS diasSinVenta
-            FROM dbo.sucursalArticulo   sa  WITH (NOLOCK)
-            JOIN dbo.articulo           a   WITH (NOLOCK) ON a.idarticulo    = sa.idarticulo
-            LEFT JOIN dbo.categoria     cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
-            LEFT JOIN dbo.detalle_venta dv  WITH (NOLOCK) ON dv.idarticulo   = a.idarticulo
-            LEFT JOIN dbo.venta         v   WITH (NOLOCK) ON v.idventa       = dv.idventa
-                                                          AND v.estado       != 'Anulado'
+                a.nombre AS articulo,
+                ISNULL(cat.nombre, 'Sin categoría') AS categoria,
+                sa.stockTotal,
+                a.precio_compra AS precioCompra,
+                ROUND(sa.stockTotal * a.precio_compra, 2) AS valorCosto,
+                DATEDIFF(DAY, uv.UltimaFecha, GETDATE()) AS diasSinVenta
+            FROM StockAgrupado sa
+            JOIN dbo.articulo a WITH (NOLOCK) ON a.idarticulo = sa.idarticulo
+            LEFT JOIN dbo.categoria cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
+            LEFT JOIN UltimaVenta uv ON uv.idarticulo = sa.idarticulo
             WHERE a.condicion = 1
-              AND sa.stock    > 0
-            GROUP BY a.idarticulo, a.codigo, a.nombre, cat.nombre, a.precio_compra
             ORDER BY valorCosto DESC";
 
         return await _db.QueryAsync<TopCapitalInmovilizadoDto>(sql);

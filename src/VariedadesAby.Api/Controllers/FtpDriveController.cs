@@ -1,7 +1,6 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
-using VariedadesAby.Core.DTOs.FtpDrive;
 using VariedadesAby.Core.Interfaces;
 using VariedadesAby.Infrastructure.Services;
 
@@ -26,16 +25,34 @@ public class FtpDriveController : ControllerBase
         _logger = logger;
     }
 
+    // ── Estado ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Devuelve el estado del último backup: si existe el de hoy, nombre del archivo,
+    /// Drive ID y fecha/hora en hora Nicaragua.
+    /// </summary>
+    [HttpGet("[action]")]
+    public async Task<IActionResult> Estado(CancellationToken ct)
+    {
+        var estado = await _driveService.ObtenerEstadoBackupAsync(ct);
+        return Ok(estado);
+    }
+
     // ── Transferencia ──────────────────────────────────────────────────────
 
     /// <summary>
     /// Ejecuta manualmente la transferencia FTP → Google Drive.
-    /// Requiere haber autorizado Google Drive previamente via GET /auth/url.
+    /// Requiere Administrador y ser el usuario con idusuario = 1.
     /// </summary>
+    [Authorize(Roles = "Administrador")]
     [HttpPost("[action]")]
     public async Task<IActionResult> Ejecutar(CancellationToken ct)
     {
-        _logger.LogInformation("[FtpDriveController] Ejecución manual solicitada.");
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!int.TryParse(userIdClaim, out var userId) || userId != 1)
+            return Forbid();
+
+        _logger.LogInformation("[FtpDriveController] Ejecución manual solicitada por idusuario={Id}.", userId);
         var result = await _orchestrator.ExecuteTransferAsync(ct);
 
         return result.IsSuccess

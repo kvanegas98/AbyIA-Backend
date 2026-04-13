@@ -8,6 +8,10 @@ public interface IComprasPdfService
         Stream pdfStream,
         int idProveedor,
         int idUsuario,
-        int idSucursal,
-        decimal tipoCambio);
+        int idSucursal);
+
+    /// <summary>
+    /// Busca un artículo por código. Retorna esNuevo=true si no existe en la BD.
+    /// </summary>
+    Task<ValidarArticuloDto> ValidarArticuloAsync(string codigo);
 }

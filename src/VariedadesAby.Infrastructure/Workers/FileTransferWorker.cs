@@ -60,7 +60,16 @@ public sealed class FileTransferWorker : BackgroundService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var orchestrator = scope.ServiceProvider.GetRequiredService<IFileTransferOrchestrator>();
 
-            await orchestrator.ExecuteTransferAsync(stoppingToken);
+            try
+            {
+                await orchestrator.ExecuteTransferAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                // Si el orquestador lanza excepción no controlada, solo logueamos.
+                // El worker NO debe morir — debe seguir corriendo para el día siguiente.
+                _logger.LogError(ex, "[Worker] Error inesperado durante la transferencia. El worker continuará activo.");
+            }
         }
 
         _logger.LogInformation("[Worker] FileTransferWorker detenido.");

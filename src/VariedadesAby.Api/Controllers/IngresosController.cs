@@ -55,6 +55,20 @@ public class IngresosController : ControllerBase
         return Ok(detalle);
     }
 
+    [HttpPost("[action]/{idIngreso:int}")]
+    public async Task<IActionResult> Anular(int idIngreso)
+    {
+        try
+        {
+            var exito = await _service.AnularAsync(idIngreso);
+            return Ok(new { success = exito, message = "Compra anulada correctamente." });
+        }
+        catch (VariedadesAby.Core.Exceptions.IngresoException ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+    }
+
     [HttpGet("[action]/{idIngreso:int}")]
     public async Task<IActionResult> Pdf(int idIngreso)
     {
