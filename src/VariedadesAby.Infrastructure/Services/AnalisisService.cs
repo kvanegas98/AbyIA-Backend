@@ -141,9 +141,35 @@ public class AnalisisService : IAnalisisService
         var whereArticulo = string.Empty;
         if (!string.IsNullOrWhiteSpace(filtro.busqueda))
         {
-            whereArticulo = "AND a.nombre LIKE @busqueda";
+            whereArticulo += " AND a.nombre LIKE @busqueda";
             p.Add("busqueda", $"%{filtro.busqueda.Trim()}%");
         }
+
+        if (!string.IsNullOrWhiteSpace(filtro.categoria))
+        {
+            whereArticulo += " AND cat.nombre = @categoria";
+            p.Add("categoria", filtro.categoria.Trim());
+        }
+
+        // Filtro de velocidad — traduce el tab de la UI a rangos de vendidosUlt30d
+        var whereVelocidad = filtro.velocidad?.Trim().ToLower() switch
+        {
+            "volando"  => " AND ISNULL(vu.vendidosUlt30d, 0) >= 30",
+            "normal"   => " AND ISNULL(vu.vendidosUlt30d, 0) >= 10 AND ISNULL(vu.vendidosUlt30d, 0) < 30",
+            "lento"    => " AND ISNULL(vu.vendidosUlt30d, 0) >= 1  AND ISNULL(vu.vendidosUlt30d, 0) < 10",
+            "detenido" => " AND ISNULL(vu.vendidosUlt30d, 0) = 0",
+            _          => string.Empty
+        };
+
+        // Ordenamiento
+        var columnaOrden = filtro.ordenar?.Trim().ToLower() switch
+        {
+            "stock"   => "stockActual",
+            "margen"  => "margenPorcentaje",
+            "nombre"  => "a.nombre",
+            _         => "vendidosUlt30d"   // default: más vendidos primero
+        };
+        var dirOrden = filtro.ordenDir?.Trim().ToLower() == "asc" ? "ASC" : "DESC";
 
         var ctes = @"
             WITH StockPorArticulo AS (
@@ -176,7 +202,7 @@ public class AnalisisService : IAnalisisService
             LEFT JOIN VentasUlt30      vu                ON vu.idarticulo   = a.idarticulo
             LEFT JOIN PrecioCompra     pc                ON pc.idarticulo   = a.idarticulo";
 
-        var baseWhere = $"WHERE a.condicion = 1 AND ISNULL(s.stockTotal, 0) > 0 {whereArticulo}";
+        var baseWhere = $"WHERE a.condicion = 1 AND ISNULL(s.stockTotal, 0) > 0 {whereArticulo}{whereVelocidad}";
 
         // ── Resumen KPI ──────────────────────────────────────────────────────
         var sqlResumen = $@"
@@ -221,7 +247,7 @@ public class AnalisisService : IAnalisisService
                     ELSE 0 END, 1)                                         AS margenPorcentaje
             {joins}
             {baseWhere}
-            ORDER BY vendidosUlt30d DESC, stockActual DESC
+            ORDER BY {columnaOrden} {dirOrden}, stockActual DESC
             OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY";
 
         p.Add("offset",    offset);
@@ -259,6 +285,25 @@ public class AnalisisService : IAnalisisService
             pagina         = filtro.pagina,
             porPagina      = filtro.porPagina
         };
+    }
+
+    // ─── Categorías para filtro de Velocidad ─────────────────────────────────
+
+    public async Task<IEnumerable<CategoriaVelocidadDto>> GetCategoriasVelocidadAsync()
+    {
+        const string sql = @"
+            SELECT
+                ISNULL(cat.nombre, 'Sin categoría') AS nombre,
+                COUNT(DISTINCT a.idarticulo)        AS totalProductos
+            FROM dbo.articulo a WITH (NOLOCK)
+            LEFT JOIN dbo.categoria cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
+            INNER JOIN dbo.sucursalArticulo sa WITH (NOLOCK)
+                ON sa.idarticulo = a.idarticulo AND sa.stock > 0
+            WHERE a.condicion = 1
+            GROUP BY cat.nombre
+            ORDER BY totalProductos DESC";
+
+        return await _db.QueryAsync<CategoriaVelocidadDto>(sql);
     }
 
     // ─── Rendimiento de Proveedores ───────────────────────────────────────────

@@ -6,10 +6,24 @@ public class FiltroAnalisisViewModel
     public int     pagina         { get; set; } = 1;
     public int     porPagina      { get; set; } = 20;
 
+    // Velocidad de Productos
+    public string? velocidad      { get; set; } // Volando | Normal | Lento | Detenido
+    public string? categoria      { get; set; } // nombre de categoría exacto (case-insensitive)
+
     // Rendimiento de Proveedores
     public string? clasificacion  { get; set; } // Estrella | Rentable | Regular | Revisar
-    public string? ordenar        { get; set; } // roi | margen | invertido | rotacion | ultimaCompra
+
+    // Compartido (Velocidad + Rendimiento)
+    public string? ordenar        { get; set; } // velocidad: vendidos|stock|margen|nombre  /  rendimiento: roi|margen|invertido|rotacion|ultimaCompra
     public string? ordenDir       { get; set; } // asc | desc  (default: desc)
+}
+
+// ─── Categorías ───────────────────────────────────────────────────────────────
+
+public class CategoriaVelocidadDto
+{
+    public string nombre          { get; set; } = string.Empty;
+    public int    totalProductos  { get; set; }
 }
 
 // ─── Resúmenes KPI ────────────────────────────────────────────────────────────

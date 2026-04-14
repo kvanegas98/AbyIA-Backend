@@ -40,6 +40,17 @@ public class AnalisisController : ControllerBase
     }
 
     /// <summary>
+    /// Categorías con productos activos en stock, ordenadas por cantidad de productos.
+    /// Usar para poblar el dropdown de filtro en Velocidad de Productos.
+    /// </summary>
+    [HttpGet("[action]")]
+    public async Task<IActionResult> CategoriasVelocidad()
+    {
+        var resultado = await _service.GetCategoriasVelocidadAsync();
+        return Ok(resultado);
+    }
+
+    /// <summary>
     /// Proveedores ordenados por ROI real. Cruza precio compra vs precio venta real.
     /// Soporta búsqueda y paginación.
     /// </summary>

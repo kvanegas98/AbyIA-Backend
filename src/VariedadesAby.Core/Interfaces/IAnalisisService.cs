@@ -7,4 +7,5 @@ public interface IAnalisisService
     Task<ClientasOroResultadoDto>            GetClientasOroAsync(FiltroAnalisisViewModel filtro);
     Task<VelocidadProductosResultadoDto>     GetVelocidadProductosAsync(FiltroAnalisisViewModel filtro);
     Task<RendimientoProveedoresResultadoDto> GetRendimientoProveedoresAsync(FiltroAnalisisViewModel filtro);
+    Task<IEnumerable<CategoriaVelocidadDto>> GetCategoriasVelocidadAsync();
 }
