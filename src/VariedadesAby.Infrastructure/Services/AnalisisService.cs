@@ -278,14 +278,47 @@ public class AnalisisService : IAnalisisService
             p.Add("busqueda", $"%{filtro.busqueda.Trim()}%");
         }
 
-        var ctes = @"
+        p.Add("offset",    offset);
+        p.Add("porPagina", filtro.porPagina);
+
+        // ── Filtro por clasificación ─────────────────────────────────────────
+        var whereClasificacion = filtro.clasificacion?.Trim().ToLower() switch
+        {
+            "estrella" => "WHERE roi >= 30 AND margenPorcentaje >= 25",
+            "rentable" => "WHERE NOT (roi >= 30 AND margenPorcentaje >= 25) AND roi >= 15 AND margenPorcentaje >= 15",
+            "regular"  => "WHERE NOT (roi >= 30 AND margenPorcentaje >= 25) AND NOT (roi >= 15 AND margenPorcentaje >= 15) AND roi >= 0",
+            "revisar"  => "WHERE roi < 0",
+            _          => ""
+        };
+
+        // ── Ordenamiento ─────────────────────────────────────────────────────
+        var columnaOrden = filtro.ordenar?.Trim().ToLower() switch
+        {
+            "margen"      => "margenPorcentaje",
+            "invertido"   => "totalInvertido",
+            "rotacion"    => "porcentajeRotacion",
+            "ultimacompra"=> "ultimaCompra",
+            _             => "roi"
+        };
+        var dirOrden = filtro.ordenDir?.Trim().ToLower() == "asc" ? "ASC" : "DESC";
+
+        // Fixes vs. original:
+        // 1. DiasRecuperacion: eliminado el JOIN cartesiano (ingreso × detalle_ingreso × detalle_venta × venta).
+        //    Se reemplaza por AVG de edad de los ingresos del proveedor — proxy sin producto cartesiano.
+        // 2. BaseProveedor: eliminado INNER JOIN dbo.ingreso i que multiplicaba cada fila
+        //    (proveedor, artículo) por el número de ingresos del proveedor, inflando todos los SUM.
+        //    ultimaCompra se mueve a ComprasPorProveedor (MAX(i.fecha_hora)) y se usa MAX(c.ultimaCompra).
+        // 3. Se usa tabla temporal #BaseProveedor para ejecutar el cálculo pesado UNA sola vez
+        //    y luego hacer las tres consultas (resumen, count, data) sobre ella con QueryMultiple.
+        var sql = $@"
             WITH ComprasPorProveedor AS (
                 SELECT
                     i.idproveedor,
                     di.idarticulo,
                     SUM(di.cantidad)             AS totalComprado,
                     SUM(di.cantidad * di.precio) AS costoTotal,
-                    AVG(di.precio)               AS precioCompraPromedio
+                    AVG(di.precio)               AS precioCompraPromedio,
+                    MAX(i.fecha_hora)            AS ultimaCompra
                 FROM dbo.detalle_ingreso di WITH (NOLOCK)
                 INNER JOIN dbo.ingreso i WITH (NOLOCK)
                     ON i.idingreso = di.idingreso
@@ -309,59 +342,48 @@ public class AnalisisService : IAnalisisService
                 GROUP BY idarticulo
             ),
             DiasRecuperacion AS (
-                SELECT
-                    i.idproveedor,
-                    AVG(DATEDIFF(DAY, i.fecha_hora, v.fecha_hora)) AS diasPromedio
-                FROM dbo.ingreso i WITH (NOLOCK)
-                INNER JOIN dbo.detalle_ingreso di WITH (NOLOCK) ON di.idingreso  = i.idingreso
-                INNER JOIN dbo.detalle_venta   dv WITH (NOLOCK) ON dv.idarticulo = di.idarticulo
-                INNER JOIN dbo.venta           v  WITH (NOLOCK) ON v.idventa     = dv.idventa
-                                                                AND v.estado    != 'Anulado'
-                                                                AND v.fecha_hora >= i.fecha_hora
-                WHERE i.estado != 'ANULADO'
-                GROUP BY i.idproveedor
-            ),
-            BaseProveedor AS (
-                SELECT
-                    p.idpersona                                                         AS idproveedor,
-                    p.nombre                                                            AS proveedor,
-                    COUNT(DISTINCT c.idarticulo)                                        AS totalProductos,
-                    ROUND(SUM(c.costoTotal), 2)                                         AS totalInvertido,
-                    ROUND(SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio), 2)  AS costoVendido,
-                    ROUND(SUM(ISNULL(s.stockTotal,0) * c.precioCompraPromedio), 2)     AS valorStockActual,
-                    ROUND(SUM(ISNULL(va.ingresoVentas,0)), 2)                          AS ingresoReal,
-                    ROUND(SUM(ISNULL(va.ingresoVentas,0))
-                          - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio), 2) AS margenBruto,
-                    ROUND(CASE WHEN SUM(ISNULL(va.ingresoVentas,0)) > 0
-                          THEN (SUM(ISNULL(va.ingresoVentas,0))
-                               - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio))
-                               * 100.0 / SUM(ISNULL(va.ingresoVentas,0))
-                          ELSE 0 END, 1)                                               AS margenPorcentaje,
-                    ROUND(CASE WHEN SUM(c.costoTotal) > 0
-                          THEN (SUM(ISNULL(va.ingresoVentas,0))
-                               - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio))
-                               * 100.0 / SUM(c.costoTotal)
-                          ELSE 0 END, 1)                                               AS roi,
-                    ROUND(CASE WHEN SUM(c.totalComprado) > 0
-                          THEN SUM(ISNULL(va.totalVendido,0)) * 100.0 / SUM(c.totalComprado)
-                          ELSE 0 END, 1)                                               AS porcentajeRotacion,
-                    ISNULL(dr.diasPromedio, 0)                                         AS diasRecuperacionPromedio,
-                    MAX(i.fecha_hora)                                                   AS ultimaCompra
-                FROM dbo.persona p WITH (NOLOCK)
-                INNER JOIN ComprasPorProveedor c ON c.idproveedor  = p.idpersona
-                INNER JOIN dbo.ingreso i WITH (NOLOCK)
-                    ON i.idproveedor = p.idpersona
-                   AND i.estado     != 'ANULADO'
-                LEFT JOIN VentasPorArticulo va ON va.idarticulo  = c.idarticulo
-                LEFT JOIN StockPorArticulo  s  ON s.idarticulo   = c.idarticulo
-                LEFT JOIN DiasRecuperacion  dr ON dr.idproveedor = p.idpersona
-                WHERE p.idpersona != 13686 " + whereProveedor + @"
-                GROUP BY p.idpersona, p.nombre, dr.diasPromedio
-            )";
+                -- Proxy: días promedio de antigüedad de los ingresos del proveedor.
+                -- Evita el JOIN cartesiano (ingreso × detalle_ingreso × detalle_venta × venta).
+                SELECT idproveedor,
+                       AVG(DATEDIFF(DAY, fecha_hora, GETDATE())) AS diasPromedio
+                FROM dbo.ingreso WITH (NOLOCK)
+                WHERE estado != 'ANULADO'
+                GROUP BY idproveedor
+            )
+            SELECT
+                p.idpersona                                                         AS idproveedor,
+                p.nombre                                                            AS proveedor,
+                COUNT(DISTINCT c.idarticulo)                                        AS totalProductos,
+                ROUND(SUM(c.costoTotal), 2)                                         AS totalInvertido,
+                ROUND(SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio), 2)  AS costoVendido,
+                ROUND(SUM(ISNULL(s.stockTotal,0) * c.precioCompraPromedio), 2)     AS valorStockActual,
+                ROUND(SUM(ISNULL(va.ingresoVentas,0)), 2)                          AS ingresoReal,
+                ROUND(SUM(ISNULL(va.ingresoVentas,0))
+                      - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio), 2) AS margenBruto,
+                ROUND(CASE WHEN SUM(ISNULL(va.ingresoVentas,0)) > 0
+                      THEN (SUM(ISNULL(va.ingresoVentas,0))
+                           - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio))
+                           * 100.0 / SUM(ISNULL(va.ingresoVentas,0))
+                      ELSE 0 END, 1)                                               AS margenPorcentaje,
+                ROUND(CASE WHEN SUM(c.costoTotal) > 0
+                      THEN (SUM(ISNULL(va.ingresoVentas,0))
+                           - SUM(ISNULL(va.totalVendido,0) * c.precioCompraPromedio))
+                           * 100.0 / SUM(c.costoTotal)
+                      ELSE 0 END, 1)                                               AS roi,
+                ROUND(CASE WHEN SUM(c.totalComprado) > 0
+                      THEN SUM(ISNULL(va.totalVendido,0)) * 100.0 / SUM(c.totalComprado)
+                      ELSE 0 END, 1)                                               AS porcentajeRotacion,
+                ISNULL(dr.diasPromedio, 0)                                         AS diasRecuperacionPromedio,
+                MAX(c.ultimaCompra)                                                AS ultimaCompra
+            INTO #BaseProveedor
+            FROM dbo.persona p WITH (NOLOCK)
+            INNER JOIN ComprasPorProveedor c ON c.idproveedor  = p.idpersona
+            LEFT JOIN VentasPorArticulo va ON va.idarticulo  = c.idarticulo
+            LEFT JOIN StockPorArticulo  s  ON s.idarticulo   = c.idarticulo
+            LEFT JOIN DiasRecuperacion  dr ON dr.idproveedor = p.idpersona
+            WHERE p.idpersona != 13686 {whereProveedor}
+            GROUP BY p.idpersona, p.nombre, dr.diasPromedio;
 
-        // ── Resumen KPI ──────────────────────────────────────────────────────
-        var sqlResumen = $@"
-            {ctes}
             SELECT
                 COUNT(*)                                                AS totalProveedores,
                 SUM(CASE WHEN roi >= 30 AND margenPorcentaje >= 25
@@ -369,27 +391,20 @@ public class AnalisisService : IAnalisisService
                 ROUND(SUM(totalInvertido), 2)                          AS totalInvertido,
                 ROUND(SUM(ingresoReal), 2)                             AS ingresoTotal,
                 ROUND(AVG(CAST(roi AS FLOAT)), 1)                      AS roiPromedio
-            FROM BaseProveedor";
+            FROM #BaseProveedor;
 
-        // ── Count total ──────────────────────────────────────────────────────
-        var sqlCount = $@"
-            {ctes}
-            SELECT COUNT(*) FROM BaseProveedor";
+            SELECT COUNT(*) FROM #BaseProveedor {whereClasificacion};
 
-        // ── Data paginada ────────────────────────────────────────────────────
-        var sqlData = $@"
-            {ctes}
-            SELECT * FROM BaseProveedor
-            ORDER BY roi DESC
-            OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY";
+            SELECT * FROM #BaseProveedor {whereClasificacion}
+            ORDER BY {columnaOrden} {dirOrden}
+            OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY;
 
-        p.Add("offset",    offset);
-        p.Add("porPagina", filtro.porPagina);
+            DROP TABLE #BaseProveedor;";
 
-        var resumen = await _db.QueryFirstOrDefaultAsync<RendimientoResumenDto>(sqlResumen, p)
-                      ?? new RendimientoResumenDto();
-        var total   = await _db.ExecuteScalarAsync<int>(sqlCount, p);
-        var raw     = await _db.QueryAsync<RendimientoProveedorDto>(sqlData, p);
+        using var multi = await _db.QueryMultipleAsync(sql, p);
+        var resumen = await multi.ReadFirstOrDefaultAsync<RendimientoResumenDto>() ?? new RendimientoResumenDto();
+        var total   = await multi.ReadFirstAsync<int>();
+        var raw     = (await multi.ReadAsync<RendimientoProveedorDto>()).ToList();
 
         foreach (var r in raw)
         {

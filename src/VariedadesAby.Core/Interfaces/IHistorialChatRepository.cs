@@ -7,6 +7,7 @@ namespace VariedadesAby.Core.Interfaces;
 /// </summary>
 public interface IHistorialChatRepository
 {
-    Task GuardarAsync(int idUsuario, string pregunta, string? sqlGenerado, string? respuestaIA, bool exito);
+    Task GuardarAsync(int idUsuario, string pregunta, string? sqlGenerado, string? respuestaIA, bool exito, string? modeloUsado = null);
     Task<IEnumerable<HistorialChatDto>> ObtenerHistorialAsync(int idUsuario, int cantidad = 20);
+    Task<IEnumerable<HistorialChatDto>> ObtenerTodoHistorialAsync(int cantidad = 50);
 }

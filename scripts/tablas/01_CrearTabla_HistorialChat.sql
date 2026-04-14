@@ -12,6 +12,7 @@ BEGIN
         RespuestaIA     NVARCHAR(MAX) NULL,
         Fecha           DATETIME NOT NULL DEFAULT GETDATE(),
         Exito           BIT NOT NULL DEFAULT 0,
+        ModeloUsado     NVARCHAR(100) NULL,
         
         CONSTRAINT FK_HistorialChat_Usuario 
             FOREIGN KEY (IdUsuario) REFERENCES dbo.usuario(idusuario)

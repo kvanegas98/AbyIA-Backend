@@ -75,4 +75,25 @@ public class IngresosController : ControllerBase
         var pdf = await _service.GenerarPdfAsync(idIngreso);
         return File(pdf, "application/pdf", $"compra_{idIngreso}.pdf");
     }
+
+    [HttpGet("[action]/{idProveedor:int}")]
+    public async Task<IActionResult> AnalisisDetalleProveedorPdf(
+        int idProveedor, [FromQuery] FiltroAnalisisProveedorViewModel filtro)
+    {
+        try
+        {
+            var pdf = await _service.GenerarPdfDetalleProveedorAsync(idProveedor, filtro);
+            return File(pdf, "application/pdf", $"analisis_proveedor_{idProveedor}.pdf");
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new
+            {
+                mensaje    = ex.Message,
+                tipo       = ex.GetType().Name,
+                detalle    = ex.InnerException?.Message,
+                stackTrace = ex.StackTrace
+            });
+        }
+    }
 }

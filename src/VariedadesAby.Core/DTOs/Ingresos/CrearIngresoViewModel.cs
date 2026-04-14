@@ -14,6 +14,7 @@ public class CrearIngresoViewModel
     [Required] public decimal total { get; set; }
     [Required] public List<DetalleIngresoViewModel> detalles { get; set; } = [];
     public List<string>? urlsImagenes { get; set; } = [];
+    public string? modeloIa { get; set; }
 }
 
 public class DetalleIngresoViewModel

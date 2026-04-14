@@ -137,7 +137,7 @@ public class AbyIAService : IAbyIAService
         {
             try
             {
-                await _historialRepo.GuardarAsync(idUsuario, pregunta, sqlGenerado, respuestaAmigable, exito);
+                await _historialRepo.GuardarAsync(idUsuario, pregunta, sqlGenerado, respuestaAmigable, exito, _ultimoModeloUsado);
             }
             catch (Exception ex)
             {

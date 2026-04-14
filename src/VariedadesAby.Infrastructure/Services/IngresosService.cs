@@ -214,9 +214,9 @@ public class IngresosService : IIngresosService
                     if (!string.IsNullOrWhiteSpace(url))
                     {
                         await _db.ExecuteAsync(
-                            @"INSERT INTO ingreso_imagen (idingreso, url_imagen)
-                              VALUES (@idingreso, @url)",
-                            new { idingreso = idIngreso, url = url.Trim() },
+                            @"INSERT INTO ingreso_imagen (idingreso, url_imagen, modelo_ia)
+                              VALUES (@idingreso, @url, @modeloIa)",
+                            new { idingreso = idIngreso, url = url.Trim(), modeloIa = model.modeloIa },
                             transaction);
                     }
                 }
@@ -312,6 +312,20 @@ public class IngresosService : IIngresosService
             p.Add("busqueda", $"%{filtro.busqueda.Trim()}%");
         }
 
+        // Traduce el semáforo a un rango de días para filtrar en SQL
+        var whereSemaforo = string.Empty;
+        if (!string.IsNullOrWhiteSpace(filtro.semaforo))
+        {
+            whereSemaforo = filtro.semaforo.ToLower() switch
+            {
+                "verde"    => "AND diasSinMovimientoPromedio <= 15",
+                "amarillo" => "AND diasSinMovimientoPromedio BETWEEN 16 AND 45",
+                "rojo"     => "AND diasSinMovimientoPromedio BETWEEN 46 AND 90",
+                "negro"    => "AND diasSinMovimientoPromedio > 90",
+                _          => string.Empty
+            };
+        }
+
         var ctes = @"
             WITH StockPorArticulo AS (
                 SELECT idarticulo, SUM(ISNULL(stock, 0)) AS stockTotal
@@ -346,45 +360,48 @@ public class IngresosService : IIngresosService
                 GROUP BY i.idproveedor, di.idarticulo
             )";
 
+        var cteResultado = $@"
+            ,ResultadoFinal AS (
+                SELECT
+                    p.idpersona                                                    AS idproveedor,
+                    p.nombre                                                       AS proveedor,
+                    COUNT(DISTINCT c.idarticulo)                                   AS totalProductos,
+                    COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
+                                        THEN c.idarticulo END)                     AS productosConStock,
+                    SUM(c.totalComprado)                                           AS totalUnidadesCompradas,
+                    SUM(ISNULL(s.stockTotal, 0))                                   AS stockActualUnidades,
+                    SUM(ISNULL(v.totalVendido, 0))                                 AS unidadesVendidas,
+                    ROUND(SUM(c.costoTotal), 2)                                    AS totalInvertido,
+                    ROUND(SUM(ISNULL(s.stockTotal, 0) * c.precioPromedio), 2)     AS valorStockActual,
+                    ROUND(SUM(ISNULL(v.totalVendido, 0) * c.precioPromedio), 2)   AS valorRecuperado,
+                    ROUND(
+                        CASE WHEN SUM(c.totalComprado) > 0
+                        THEN SUM(ISNULL(v.totalVendido, 0)) * 100.0 / SUM(c.totalComprado)
+                        ELSE 0 END, 1)                                             AS porcentajeRotacion,
+                    MAX(c.ultimaCompraArticulo)                                    AS ultimaCompra,
+                    AVG(CASE WHEN ISNULL(s.stockTotal, 0) > 0
+                             THEN DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE())
+                             END)                                                  AS diasSinMovimientoPromedio
+                FROM persona p WITH (NOLOCK)
+                INNER JOIN ComprasPorProveedorArticulo c ON c.idproveedor = p.idpersona
+                LEFT  JOIN StockPorArticulo         s  ON s.idarticulo  = c.idarticulo
+                LEFT  JOIN VentasPorArticulo        v  ON v.idarticulo  = c.idarticulo
+                LEFT  JOIN UltimaVentaPorArticulo   uv ON uv.idarticulo = c.idarticulo
+                WHERE p.idpersona != 13686 {whereProveedor}
+                GROUP BY p.idpersona, p.nombre
+            )";
+
         var sqlCount = $@"
             {ctes}
-            SELECT COUNT(DISTINCT p.idpersona)
-            FROM persona p WITH (NOLOCK)
-            INNER JOIN ComprasPorProveedorArticulo c ON c.idproveedor = p.idpersona
-            INNER JOIN ingreso i WITH (NOLOCK) ON i.idproveedor = p.idpersona
-                                              AND i.estado <> 'ANULADO'
-            WHERE p.idpersona != 13686 {whereProveedor}";
+            {cteResultado}
+            SELECT COUNT(*) FROM ResultadoFinal
+            WHERE 1=1 {whereSemaforo}";
 
         var sqlData = $@"
             {ctes}
-            SELECT
-                p.idpersona                                                    AS idproveedor,
-                p.nombre                                                       AS proveedor,
-                COUNT(DISTINCT c.idarticulo)                                   AS totalProductos,
-                COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
-                                    THEN c.idarticulo END)                     AS productosConStock,
-                SUM(c.totalComprado)                                           AS totalUnidadesCompradas,
-                SUM(ISNULL(s.stockTotal, 0))                                   AS stockActualUnidades,
-                SUM(ISNULL(v.totalVendido, 0))                                 AS unidadesVendidas,
-                ROUND(SUM(c.costoTotal), 2)                                    AS totalInvertido,
-                ROUND(SUM(ISNULL(s.stockTotal, 0) * c.precioPromedio), 2)     AS valorStockActual,
-                ROUND(SUM(ISNULL(v.totalVendido, 0) * c.precioPromedio), 2)   AS valorRecuperado,
-                ROUND(
-                    CASE WHEN SUM(c.totalComprado) > 0
-                    THEN SUM(ISNULL(v.totalVendido, 0)) * 100.0 / SUM(c.totalComprado)
-                    ELSE 0 END, 1)                                             AS porcentajeRotacion,
-                MAX(i.fecha_hora)                                              AS ultimaCompra,
-                AVG(DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE()))
-                                                                               AS diasSinMovimientoPromedio
-            FROM persona p WITH (NOLOCK)
-            INNER JOIN ComprasPorProveedorArticulo c ON c.idproveedor = p.idpersona
-            INNER JOIN ingreso i WITH (NOLOCK) ON i.idproveedor = p.idpersona
-                                              AND i.estado <> 'ANULADO'
-            LEFT  JOIN StockPorArticulo         s  ON s.idarticulo  = c.idarticulo
-            LEFT  JOIN VentasPorArticulo        v  ON v.idarticulo  = c.idarticulo
-            LEFT  JOIN UltimaVentaPorArticulo   uv ON uv.idarticulo = c.idarticulo
-            WHERE p.idpersona != 13686 {whereProveedor}
-            GROUP BY p.idpersona, p.nombre
+            {cteResultado}
+            SELECT * FROM ResultadoFinal
+            WHERE 1=1 {whereSemaforo}
             ORDER BY valorStockActual DESC
             OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY";
 
@@ -435,14 +452,112 @@ public class IngresosService : IIngresosService
         var p      = new DynamicParameters();
         p.Add("idProveedor", idProveedor);
 
-        var whereArticulo = string.Empty;
+        var (ctes, cteResultado, whereSemaforo) = BuildDetalleCtes(filtro, p);
+
+        p.Add("offset",    offset);
+        p.Add("porPagina", filtro.porPagina);
+
+        var orderBy = filtro.ordenar?.ToLower() switch
+        {
+            "rotacionasc"  => "ORDER BY porcentajeRotacion ASC,  diasSinMovimiento DESC",
+            "rotaciondesc" => "ORDER BY porcentajeRotacion DESC, diasSinMovimiento ASC",
+            "valordesc"    => "ORDER BY valorStockActual DESC,   diasSinMovimiento DESC",
+            "nombreasc"    => "ORDER BY articulo ASC",
+            _              => "ORDER BY diasSinMovimiento DESC, valorStockActual DESC"
+        };
+
+        var sqlCount = $@"
+            {ctes} {cteResultado}
+            SELECT COUNT(*) FROM ResultadoDetalle WHERE 1=1 {whereSemaforo}";
+
+        var sqlData = $@"
+            {ctes} {cteResultado}
+            SELECT * FROM ResultadoDetalle WHERE 1=1 {whereSemaforo}
+            {orderBy}
+            OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY";
+
+        var total = await _db.ExecuteScalarAsync<int>(sqlCount, p);
+        var raw   = await _db.QueryAsync<AnalisisProveedorDetalleDto>(sqlData, p);
+
+        AplicarClasificacionDetalle(raw);
+
+        return new PagedResult<AnalisisProveedorDetalleDto>
+        {
+            data           = raw,
+            totalRegistros = total,
+            pagina         = filtro.pagina,
+            porPagina      = filtro.porPagina
+        };
+    }
+
+    public async Task<byte[]> GenerarPdfDetalleProveedorAsync(
+        int idProveedor, FiltroAnalisisProveedorViewModel filtro)
+    {
+        var p = new DynamicParameters();
+        p.Add("idProveedor", idProveedor);
+
+        var nombreProveedor = await _db.ExecuteScalarAsync<string>(
+            "SELECT nombre FROM persona WITH (NOLOCK) WHERE idpersona = @idProveedor",
+            p) ?? $"Proveedor #{idProveedor}";
+
+        var (ctes, cteResultado, whereSemaforo) = BuildDetalleCtes(filtro, p);
+
+        var orderBy = filtro.ordenar?.ToLower() switch
+        {
+            "rotacionasc"  => "ORDER BY porcentajeRotacion ASC,  diasSinMovimiento DESC",
+            "rotaciondesc" => "ORDER BY porcentajeRotacion DESC, diasSinMovimiento ASC",
+            "valordesc"    => "ORDER BY valorStockActual DESC,   diasSinMovimiento DESC",
+            "nombreasc"    => "ORDER BY articulo ASC",
+            _              => "ORDER BY diasSinMovimiento DESC, valorStockActual DESC"
+        };
+
+        var sqlData = $@"
+            {ctes} {cteResultado}
+            SELECT * FROM ResultadoDetalle WHERE 1=1 {whereSemaforo}
+            {orderBy}";
+
+        var articulos = (await _db.QueryAsync<AnalisisProveedorDetalleDto>(sqlData, p)).ToList();
+        AplicarClasificacionDetalle(articulos);
+
+        return BuildPdfDetalle(nombreProveedor, articulos, filtro);
+    }
+
+    // ── Helpers privados para detalle de proveedor ────────────────────────────
+
+    private static (string ctes, string cteResultado, string whereSemaforo) BuildDetalleCtes(
+        FiltroAnalisisProveedorViewModel filtro, DynamicParameters p)
+    {
+        var whereInner = new List<string>();
+
         if (!string.IsNullOrWhiteSpace(filtro.busqueda))
         {
-            whereArticulo = "AND a.nombre LIKE @busqueda";
+            whereInner.Add("a.nombre LIKE @busqueda");
             p.Add("busqueda", $"%{filtro.busqueda.Trim()}%");
         }
 
-        var ctes = @"
+        if (!string.IsNullOrWhiteSpace(filtro.categoria))
+        {
+            whereInner.Add("cat.nombre LIKE @categoria");
+            p.Add("categoria", $"%{filtro.categoria.Trim()}%");
+        }
+
+        if (filtro.soloConStock)
+            whereInner.Add("ISNULL(s.stockTotal, 0) > 0");
+
+        var whereClause = whereInner.Count > 0
+            ? "AND " + string.Join(" AND ", whereInner)
+            : string.Empty;
+
+        var whereSemaforo = filtro.semaforo?.ToLower() switch
+        {
+            "verde"    => "AND diasSinMovimiento <= 15",
+            "amarillo" => "AND diasSinMovimiento BETWEEN 16 AND 45",
+            "rojo"     => "AND diasSinMovimiento BETWEEN 46 AND 90",
+            "negro"    => "AND diasSinMovimiento > 90",
+            _          => string.Empty
+        };
+
+        const string ctes = @"
             WITH StockPorArticulo AS (
                 SELECT idarticulo, SUM(ISNULL(stock, 0)) AS stockTotal
                 FROM sucursalArticulo WITH (NOLOCK)
@@ -476,50 +591,40 @@ public class IngresosService : IIngresosService
                 GROUP BY di.idarticulo
             )";
 
-        var sqlCount = $@"
-            {ctes}
-            SELECT COUNT(*)
-            FROM ComprasArticulo c
-            INNER JOIN articulo a WITH (NOLOCK) ON a.idarticulo = c.idarticulo
-            WHERE 1=1 {whereArticulo}";
+        var cteResultado = $@"
+            ,ResultadoDetalle AS (
+                SELECT
+                    a.codigo,
+                    a.nombre                                                            AS articulo,
+                    cat.nombre                                                          AS categoria,
+                    c.totalComprado,
+                    ISNULL(s.stockTotal, 0)                                             AS stockActual,
+                    ISNULL(v.totalVendido, 0)                                           AS unidadesVendidas,
+                    ROUND(CASE WHEN c.totalComprado > 0
+                          THEN ISNULL(v.totalVendido, 0) * 100.0 / c.totalComprado
+                          ELSE 0 END, 1)                                                AS porcentajeRotacion,
+                    c.precioPromedio                                                    AS precioCompra,
+                    a.precio_venta                                                      AS precioVenta,
+                    ROUND(ISNULL(s.stockTotal, 0) * c.precioPromedio, 2)               AS valorStockActual,
+                    ROUND(c.costoTotal, 2)                                              AS totalInvertido,
+                    c.ultimaCompra,
+                    uv.ultimaVenta,
+                    DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompra), GETDATE()) AS diasSinMovimiento
+                FROM ComprasArticulo c
+                INNER JOIN articulo  a   WITH (NOLOCK) ON a.idarticulo    = c.idarticulo
+                LEFT  JOIN categoria cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
+                LEFT  JOIN StockPorArticulo       s  ON s.idarticulo  = c.idarticulo
+                LEFT  JOIN VentasPorArticulo      v  ON v.idarticulo  = c.idarticulo
+                LEFT  JOIN UltimaVentaPorArticulo uv ON uv.idarticulo = c.idarticulo
+                WHERE 1=1 {whereClause}
+            )";
 
-        var sqlData = $@"
-            {ctes}
-            SELECT
-                a.codigo,
-                a.nombre                                                              AS articulo,
-                cat.nombre                                                            AS categoria,
-                c.totalComprado,
-                ISNULL(s.stockTotal, 0)                                               AS stockActual,
-                ISNULL(v.totalVendido, 0)                                             AS unidadesVendidas,
-                ROUND(
-                    CASE WHEN c.totalComprado > 0
-                    THEN ISNULL(v.totalVendido, 0) * 100.0 / c.totalComprado
-                    ELSE 0 END, 1)                                                    AS porcentajeRotacion,
-                c.precioPromedio                                                      AS precioCompra,
-                a.precio_venta                                                        AS precioVenta,
-                ROUND(ISNULL(s.stockTotal, 0) * c.precioPromedio, 2)                 AS valorStockActual,
-                ROUND(c.costoTotal, 2)                                                AS totalInvertido,
-                c.ultimaCompra,
-                uv.ultimaVenta,
-                DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompra), GETDATE())   AS diasSinMovimiento
-            FROM ComprasArticulo c
-            INNER JOIN articulo  a   WITH (NOLOCK) ON a.idarticulo    = c.idarticulo
-            LEFT  JOIN categoria cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
-            LEFT  JOIN StockPorArticulo      s  ON s.idarticulo  = c.idarticulo
-            LEFT  JOIN VentasPorArticulo     v  ON v.idarticulo  = c.idarticulo
-            LEFT  JOIN UltimaVentaPorArticulo uv ON uv.idarticulo = c.idarticulo
-            WHERE 1=1 {whereArticulo}
-            ORDER BY diasSinMovimiento DESC, valorStockActual DESC
-            OFFSET @offset ROWS FETCH NEXT @porPagina ROWS ONLY";
+        return (ctes, cteResultado, whereSemaforo);
+    }
 
-        p.Add("offset",    offset);
-        p.Add("porPagina", filtro.porPagina);
-
-        var total = await _db.ExecuteScalarAsync<int>(sqlCount, p);
-        var raw   = await _db.QueryAsync<AnalisisProveedorDetalleDto>(sqlData, p);
-
-        foreach (var r in raw)
+    private static void AplicarClasificacionDetalle(IEnumerable<AnalisisProveedorDetalleDto> items)
+    {
+        foreach (var r in items)
         {
             (r.clasificacionInventario, r.semaforo) = r.diasSinMovimiento switch
             {
@@ -529,14 +634,209 @@ public class IngresosService : IIngresosService
                 _     => ("Muerto",  "negro")
             };
         }
+    }
 
-        return new PagedResult<AnalisisProveedorDetalleDto>
+    private static byte[] BuildPdfDetalle(
+        string proveedor, List<AnalisisProveedorDetalleDto> articulos, FiltroAnalisisProveedorViewModel filtro)
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+
+        // ── KPIs del resumen ──────────────────────────────────────────────────
+        var totalProductos   = articulos.Count;
+        var conStock         = articulos.Count(a => a.stockActual > 0);
+        var totalInvertido   = articulos.Sum(a => a.totalInvertido);
+        var capitalBodega    = articulos.Sum(a => a.valorStockActual);
+        var rotacionGlobal   = articulos.Sum(a => a.totalComprado) > 0
+            ? articulos.Sum(a => a.unidadesVendidas) * 100.0m / articulos.Sum(a => a.totalComprado)
+            : 0m;
+        var diasPromedio     = articulos.Where(a => a.stockActual > 0).Select(a => a.diasSinMovimiento)
+            .DefaultIfEmpty(0).Average();
+        var generadoEn       = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+
+        // Colores
+        var azulOscuro  = Colors.Blue.Darken4;
+        var azulMedio   = Colors.Blue.Darken2;
+        var grisClaro   = Colors.Grey.Lighten4;
+        var grisTexto   = Colors.Grey.Darken2;
+
+        static string Fmt(decimal v)  => $"C${v:N0}";
+        static string FmtPct(decimal v) => $"{v:N1}%";
+
+        static string ColorSemaforo(string s) => s switch
         {
-            data           = raw,
-            totalRegistros = total,
-            pagina         = filtro.pagina,
-            porPagina      = filtro.porPagina
+            "verde"    => Colors.Green.Darken1,
+            "amarillo" => Colors.Yellow.Darken2,
+            "rojo"     => Colors.Red.Darken1,
+            _          => Colors.Grey.Darken3
         };
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(25);
+                page.DefaultTextStyle(t => t.FontSize(8).FontFamily("Lato"));
+
+                // ── HEADER ────────────────────────────────────────────────────
+                page.Header().Background(azulOscuro).Padding(12).Row(row =>
+                {
+                    row.RelativeItem().Column(col =>
+                    {
+                        col.Item().Text("VARIEDADES ABY")
+                            .FontSize(16).Bold().FontColor(Colors.White);
+                        col.Item().Text("Análisis de Inventario por Proveedor")
+                            .FontSize(9).FontColor(Colors.Blue.Lighten3);
+                    });
+                    row.ConstantItem(200).AlignRight().Column(col =>
+                    {
+                        col.Item().Text(proveedor)
+                            .FontSize(13).Bold().FontColor(Colors.White).AlignRight();
+                        col.Item().Text($"Generado: {generadoEn}")
+                            .FontSize(8).FontColor(Colors.Blue.Lighten3).AlignRight();
+                    });
+                });
+
+                // ── CONTENIDO ─────────────────────────────────────────────────
+                page.Content().Column(col =>
+                {
+                    col.Spacing(6);
+
+                    // KPI Cards
+                    col.Item().Padding(4).Row(kpiRow =>
+                    {
+                        kpiRow.Spacing(5);
+                        void KpiCard(string label, string valor, string color)
+                        {
+                            kpiRow.RelativeItem().Border(1).BorderColor(Colors.Grey.Lighten2)
+                                .Background(grisClaro).Padding(6).Column(c =>
+                                {
+                                    c.Item().Text(label).FontSize(7).FontColor(grisTexto);
+                                    c.Item().Text(valor).FontSize(11).Bold().FontColor(color);
+                                });
+                        }
+
+                        KpiCard("PRODUCTOS",     $"{totalProductos} total / {conStock} con stock", azulMedio);
+                        KpiCard("TOTAL INVERTIDO", Fmt(totalInvertido),  Colors.Blue.Darken3);
+                        KpiCard("CAPITAL EN BODEGA", Fmt(capitalBodega), Colors.Orange.Darken2);
+                        KpiCard("ROTACIÓN GLOBAL", FmtPct(rotacionGlobal),
+                            rotacionGlobal >= 75 ? Colors.Green.Darken2 :
+                            rotacionGlobal >= 50 ? Colors.Orange.Darken2 : Colors.Red.Darken1);
+                        KpiCard("DÍAS SIN MOVTO (prom)", $"{diasPromedio:N0} días",
+                            diasPromedio <= 15 ? Colors.Green.Darken2 :
+                            diasPromedio <= 45 ? Colors.Yellow.Darken3 :
+                            diasPromedio <= 90 ? Colors.Red.Darken1 : Colors.Grey.Darken3);
+                    });
+
+                    // Filtros activos
+                    var filtrosActivos = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(filtro.semaforo))   filtrosActivos.Add($"Semáforo: {filtro.semaforo}");
+                    if (!string.IsNullOrWhiteSpace(filtro.categoria))  filtrosActivos.Add($"Categoría: {filtro.categoria}");
+                    if (!string.IsNullOrWhiteSpace(filtro.busqueda))   filtrosActivos.Add($"Búsqueda: {filtro.busqueda}");
+                    if (filtro.soloConStock)                            filtrosActivos.Add("Solo con stock");
+
+                    if (filtrosActivos.Count > 0)
+                    {
+                        col.Item().Background(Colors.Blue.Lighten5).Padding(5)
+                            .Text($"Filtros aplicados: {string.Join("  ·  ", filtrosActivos)}")
+                            .FontSize(7).Italic().FontColor(azulMedio);
+                    }
+
+                    // Tabla
+                    col.Item().Table(table =>
+                    {
+                        table.ColumnsDefinition(cols =>
+                        {
+                            cols.ConstantColumn(18);   // #
+                            cols.ConstantColumn(45);   // Código
+                            cols.RelativeColumn(3);    // Artículo
+                            cols.RelativeColumn(2);    // Categoría
+                            cols.ConstantColumn(38);   // Comprado
+                            cols.ConstantColumn(38);   // Vendido
+                            cols.ConstantColumn(35);   // Stock
+                            cols.ConstantColumn(38);   // Rotación
+                            cols.ConstantColumn(52);   // P.Compra
+                            cols.ConstantColumn(52);   // P.Venta
+                            cols.ConstantColumn(58);   // Val.Bodega
+                            cols.ConstantColumn(32);   // Días
+                            cols.ConstantColumn(45);   // Estado
+                        });
+
+                        // Header de tabla
+                        void Th(string txt) =>
+                            table.Header(h => h.Cell().Background(azulOscuro).Padding(4)
+                                .Text(txt).FontSize(7).Bold().FontColor(Colors.White).AlignCenter());
+
+                        table.Header(h =>
+                        {
+                            foreach (var col2 in new[] { "#", "Código", "Artículo", "Categoría",
+                                "Comprado", "Vendido", "Stock", "Rotación", "P.Compra", "P.Venta",
+                                "Val.Bodega", "Días", "Estado" })
+                            {
+                                h.Cell().Background(azulOscuro).Padding(4)
+                                    .Text(col2).FontSize(7).Bold().FontColor(Colors.White).AlignCenter();
+                            }
+                        });
+
+                        // Filas
+                        for (int i = 0; i < articulos.Count; i++)
+                        {
+                            var a   = articulos[i];
+                            var bg  = i % 2 == 0 ? Colors.White : grisClaro;
+                            var colorSem = ColorSemaforo(a.semaforo);
+
+                            void Td(string txt, bool center = true, string? color = null)
+                            {
+                                var cell = table.Cell().Background(bg).Padding(3);
+                                var t = cell.Text(txt).FontSize(7);
+                                if (center) t.AlignCenter();
+                                if (!string.IsNullOrEmpty(color)) t.FontColor(color);
+                            }
+
+                            Td((i + 1).ToString());
+                            Td(a.codigo ?? "-");
+                            table.Cell().Background(bg).Padding(3)
+                                .Text(a.articulo).FontSize(7);
+                            table.Cell().Background(bg).Padding(3)
+                                .Text(a.categoria ?? "-").FontSize(7).FontColor(grisTexto);
+                            Td($"{a.totalComprado:N0}");
+                            Td($"{a.unidadesVendidas:N0}");
+                            Td($"{a.stockActual:N0}",
+                                color: a.stockActual == 0 ? Colors.Grey.Lighten1 : "");
+                            Td(FmtPct(a.porcentajeRotacion),
+                                color: a.porcentajeRotacion >= 75 ? Colors.Green.Darken2 :
+                                       a.porcentajeRotacion >= 50 ? Colors.Orange.Darken2 :
+                                       Colors.Red.Darken1);
+                            Td($"C${a.precioCompra:N2}");
+                            Td(a.precioVenta.HasValue ? $"C${a.precioVenta:N2}" : "-");
+                            Td(Fmt(a.valorStockActual));
+                            Td($"{a.diasSinMovimiento}d");
+                            table.Cell().Background(bg).Padding(2)
+                                .Text(a.clasificacionInventario).FontSize(7)
+                                .Bold().FontColor(colorSem).AlignCenter();
+                        }
+                    });
+                });
+
+                // ── FOOTER ────────────────────────────────────────────────────
+                page.Footer().BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(4)
+                    .Row(row =>
+                    {
+                        row.RelativeItem().Text($"Variedades Aby · {proveedor} · {articulos.Count} artículos")
+                            .FontSize(7).FontColor(grisTexto);
+                        row.ConstantItem(80).AlignRight()
+                            .Text(x =>
+                            {
+                                x.Span("Página ").FontSize(7).FontColor(grisTexto);
+                                x.CurrentPageNumber().FontSize(7).FontColor(grisTexto);
+                                x.Span(" de ").FontSize(7).FontColor(grisTexto);
+                                x.TotalPages().FontSize(7).FontColor(grisTexto);
+                            });
+                    });
+            });
+        });
+
+        return doc.GeneratePdf();
     }
 
     public async Task<IngresoDetalleDto> ObtenerDetalleAsync(int idIngreso)
@@ -598,7 +898,7 @@ public class IngresosService : IIngresosService
             {
                 page.Size(PageSizes.A4);
                 page.Margin(30);
-                page.DefaultTextStyle(x => x.FontSize(9).FontFamily("Arial"));
+                page.DefaultTextStyle(x => x.FontSize(9).FontFamily("Lato"));
 
                 // ── Header ───────────────────────────────────────────────────
                 page.Header().Column(col =>

@@ -10,4 +10,7 @@ public record HistorialChatDto
     public string? RespuestaIA { get; init; }
     public DateTime Fecha { get; init; }
     public bool Exito { get; init; }
+    public string? SqlGenerado { get; init; }
+    public string? ModeloUsado { get; init; }
+    public string? NombreUsuario { get; init; }
 }

@@ -1,0 +1,1 @@
+using System; class P { static void Main() { try { Console.WriteLine(TimeZoneInfo.FindSystemTimeZoneById("Central America Standard Time").Id); } catch (Exception e) { Console.WriteLine(e.Message); } try { Console.WriteLine(TimeZoneInfo.FindSystemTimeZoneById("America/Managua").Id); } catch (Exception e) { Console.WriteLine(e.Message); } } }

@@ -111,15 +111,17 @@ public class AbyIAChatController : ControllerBase
     /// </summary>
     // GET: api/AbyIAChat/Historial?cantidad=20
     [HttpGet("[action]")]
-    public async Task<IActionResult> Historial([FromQuery] int cantidad = 20)
+    public async Task<IActionResult> Historial([FromQuery] int cantidad = 50)
     {
-        if (cantidad < 1 || cantidad > 100)
-        {
-            cantidad = 20;
-        }
+        if (cantidad < 1 || cantidad > 200)
+            cantidad = 50;
 
         var idUsuario = ObtenerIdUsuario();
-        var historial = await _historialRepo.ObtenerHistorialAsync(idUsuario, cantidad);
+
+        if (idUsuario != 1)
+            return StatusCode(403, ApiResponse<object>.Fail("No tienes permiso para consultar el historial."));
+
+        var historial = await _historialRepo.ObtenerTodoHistorialAsync(cantidad);
 
         return Ok(ApiResponse<object>.Ok(historial));
     }

@@ -2,9 +2,14 @@ namespace VariedadesAby.Core.DTOs.Analisis;
 
 public class FiltroAnalisisViewModel
 {
-    public string? busqueda  { get; set; }
-    public int     pagina    { get; set; } = 1;
-    public int     porPagina { get; set; } = 20;
+    public string? busqueda       { get; set; }
+    public int     pagina         { get; set; } = 1;
+    public int     porPagina      { get; set; } = 20;
+
+    // Rendimiento de Proveedores
+    public string? clasificacion  { get; set; } // Estrella | Rentable | Regular | Revisar
+    public string? ordenar        { get; set; } // roi | margen | invertido | rotacion | ultimaCompra
+    public string? ordenDir       { get; set; } // asc | desc  (default: desc)
 }
 
 // ─── Resúmenes KPI ────────────────────────────────────────────────────────────

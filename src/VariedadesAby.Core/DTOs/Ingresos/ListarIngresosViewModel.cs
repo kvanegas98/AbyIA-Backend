@@ -30,9 +30,21 @@ public class IngresoListadoDto
 
 public class FiltroAnalisisProveedorViewModel
 {
-    public string? busqueda  { get; set; }
-    public int     pagina    { get; set; } = 1;
-    public int     porPagina { get; set; } = 20;
+    /// <summary>Busca por nombre de artículo o proveedor (LIKE).</summary>
+    public string? busqueda    { get; set; }
+    /// <summary>Filtro por semáforo: "verde", "amarillo", "rojo", "negro". Null = todos.</summary>
+    public string? semaforo    { get; set; }
+    /// <summary>Filtro por nombre de categoría (LIKE). Solo aplica en detalle de proveedor.</summary>
+    public string? categoria   { get; set; }
+    /// <summary>Solo artículos/proveedores con stock > 0. Solo aplica en detalle de proveedor.</summary>
+    public bool    soloConStock { get; set; } = false;
+    /// <summary>
+    /// Criterio de ordenamiento para detalle de proveedor:
+    /// "diasDesc" (default), "rotacionAsc", "rotacionDesc", "valorDesc", "nombreAsc"
+    /// </summary>
+    public string? ordenar     { get; set; }
+    public int     pagina      { get; set; } = 1;
+    public int     porPagina   { get; set; } = 20;
 }
 
 public class PagedResult<T>

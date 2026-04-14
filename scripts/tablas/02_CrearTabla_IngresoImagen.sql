@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[ingreso_imagen](
 	[idingreso_imagen] [int] IDENTITY(1,1) NOT NULL,
 	[idingreso] [int] NOT NULL,
 	[url_imagen] [varchar](1000) NOT NULL,
+	[modelo_ia] [nvarchar](100) NULL,
  CONSTRAINT [PK_ingreso_imagen] PRIMARY KEY CLUSTERED 
 (
 	[idingreso_imagen] ASC

@@ -14,4 +14,16 @@ public class SchedulerSettings
     /// Linux/IANA: "America/Managua".
     /// </summary>
     public string TimeZoneId { get; set; } = "Central America Standard Time";
+
+    /// <summary>
+    /// Número máximo de reintentos automáticos si la transferencia falla.
+    /// Default: 2 (reintenta a los 30 y 60 minutos de la hora programada).
+    /// </summary>
+    public int MaxRetries { get; set; } = 2;
+
+    /// <summary>
+    /// Minutos de espera entre cada reintento.
+    /// Default: 30 minutos.
+    /// </summary>
+    public int RetryIntervalMinutes { get; set; } = 30;
 }
