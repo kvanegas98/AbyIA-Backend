@@ -49,7 +49,7 @@ public sealed class EmailNotificationService : IEmailNotificationService
             </div>
             """;
 
-        return SendAsync(subject, body, ct);
+        return SendAsync(subject, body, _settings.BackupRecipients, ct);
     }
 
     public Task<string?> SendTransferFailureAsync(string errorMessage, CancellationToken ct = default)
@@ -70,7 +70,7 @@ public sealed class EmailNotificationService : IEmailNotificationService
             </div>
             """;
 
-        return SendAsync(subject, body, ct);
+        return SendAsync(subject, body, _settings.BackupRecipients, ct);
     }
 
     public Task<string?> SendTestEmailAsync(CancellationToken ct = default)
@@ -84,7 +84,7 @@ public sealed class EmailNotificationService : IEmailNotificationService
             </div>
             """;
 
-        return SendAsync(subject, body, ct);
+        return SendAsync(subject, body, _settings.BackupRecipients, ct);
     }
 
     public Task<string?> SendReporteDiarioAsync(ReporteDiarioDto r, CancellationToken ct = default)
@@ -222,25 +222,25 @@ public sealed class EmailNotificationService : IEmailNotificationService
             </div>
             """;
 
-        return SendAsync(subject, body, ct);
+        return SendAsync(subject, body, _settings.ReportRecipients, ct);
     }
 
     /// <summary>
     /// Envía el correo y retorna null si tuvo éxito, o el mensaje de error si falló.
     /// Nunca lanza excepción — el fallo de email no debe interrumpir el flujo principal.
     /// </summary>
-    private async Task<string?> SendAsync(string subject, string htmlBody, CancellationToken ct)
+    private async Task<string?> SendAsync(string subject, string htmlBody, List<string> recipients, CancellationToken ct)
     {
-        if (_settings.ReportRecipients.Count == 0)
+        if (recipients.Count == 0)
         {
-            var msg = "No hay destinatarios configurados en EmailSettings:ReportRecipients.";
+            var msg = "No hay destinatarios configurados para este tipo de correo.";
             _logger.LogWarning("[Email] {Msg}", msg);
             return msg;
         }
 
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(_settings.FromName, _settings.FromEmail));
-        foreach (var address in _settings.ReportRecipients)
+        foreach (var address in recipients)
             message.To.Add(MailboxAddress.Parse(address));
         message.Subject = subject;
         message.Body = new TextPart(TextFormat.Html) { Text = htmlBody };
@@ -262,7 +262,7 @@ public sealed class EmailNotificationService : IEmailNotificationService
             await smtp.SendAsync(message, ct);
             await smtp.DisconnectAsync(true, ct);
 
-            _logger.LogInformation("[Email] Enviado a: {To}", string.Join(", ", _settings.ReportRecipients));
+            _logger.LogInformation("[Email] Enviado a: {To}", string.Join(", ", recipients));
             return null; // éxito
         }
         catch (Exception ex)

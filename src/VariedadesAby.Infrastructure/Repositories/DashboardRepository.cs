@@ -90,16 +90,18 @@ public class DashboardRepository : IDashboardRepository
 
         return new DashboardResumenDto
         {
-            VentaNetaHoy                     = raw.VentaHoy,
-            CuentasPorCobrar                 = raw.CuentasPorCobrar,
-            TicketPromedio                   = ticketHoy,
-            StockCritico                     = raw.StockCritico,
-            PorcentajeVentaNetavsAyer        = raw.VentaAyer == 0 ? (raw.VentaHoy > 0 ? 100 : 0)
-                                               : Math.Round(((raw.VentaHoy - raw.VentaAyer) / raw.VentaAyer) * 100, 2),
-            PorcentajeTicketPromediovsAyer   = ticketAyer == 0 ? (ticketHoy > 0 ? 100 : 0)
-                                               : Math.Round(((ticketHoy - ticketAyer) / ticketAyer) * 100, 2),
-            PorcentajeCuentasPorCobrarvsAyer = 0,
-            PorcentajeStockCriticovsAyer     = 0
+            VentaPeriodo                        = raw.VentaHoy,
+            CantidadVentasPeriodo               = raw.CantidadVentasHoy,
+            TicketPeriodo                       = ticketHoy,
+            CuentasPorCobrar                    = raw.CuentasPorCobrar,
+            StockCritico                        = raw.StockCritico,
+            PorcentajeVentavsPeriodoAnterior    = raw.VentaAyer == 0 ? (raw.VentaHoy > 0 ? 100 : 0)
+                                                  : Math.Round(((raw.VentaHoy - raw.VentaAyer) / raw.VentaAyer) * 100, 2),
+            PorcentajeTicketvsPeriodoAnterior   = ticketAyer == 0 ? (ticketHoy > 0 ? 100 : 0)
+                                                  : Math.Round(((ticketHoy - ticketAyer) / ticketAyer) * 100, 2),
+            FechaDesde  = DateTime.Today,
+            FechaHasta  = DateTime.Today,
+            DiasPeriodo = 1,
         };
     }
 }

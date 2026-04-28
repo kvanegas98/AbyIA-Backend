@@ -13,6 +13,9 @@ public class EmailSettings
     public string FromEmail { get; set; } = string.Empty;
     public string FromName { get; set; } = "Variedades Aby Admin";
 
-    /// <summary>Lista de destinatarios que recibirán la notificación de transferencia.</summary>
+    /// <summary>Destinatarios del reporte diario de operaciones.</summary>
     public List<string> ReportRecipients { get; set; } = new();
+
+    /// <summary>Destinatarios de notificaciones de backup (FTP → Drive).</summary>
+    public List<string> BackupRecipients { get; set; } = new();
 }

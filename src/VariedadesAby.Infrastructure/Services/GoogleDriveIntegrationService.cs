@@ -94,6 +94,11 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
     public async Task<EstadoBackupDto> ObtenerEstadoBackupAsync(CancellationToken ct = default)
     {
         var now = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
+
+        // Prefijo del día sin el número de sufijo (_1, _2…) para buscar en Drive
+        var prefixHoy = BuildDayPrefix(_ftpSettings.FileNamePattern, now);
+
+        // Nombre canónico para mostrar en el DTO (igual que antes, con _1)
         var archivoHoy = _ftpSettings.FileNamePattern
             .Replace("{M}",    now.Month.ToString())
             .Replace("{d}",    now.Day.ToString())
@@ -129,9 +134,9 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
             var lastResult = await lastReq.ExecuteAsync(ct);
             var lastFile   = lastResult.Files.FirstOrDefault();
 
-            // ── ¿Existe ya el archivo de hoy? ─────────────────────────────────────
+            // ── ¿Existe ya algún backup de hoy? (busca por prefijo para cubrir _1, _2…) ──
             var todayReq = service.Files.List();
-            todayReq.Q = $"name='{archivoHoy}' AND trashed=false";
+            todayReq.Q = $"name contains '{prefixHoy}' AND name contains '.bak' AND trashed=false";
             todayReq.Fields   = "files(id)";
             todayReq.PageSize = 1;
 
@@ -272,6 +277,23 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
 
     private static string BuildMonthFolderName(DateTime date) =>
         $"{date.Month:D2} - {MesesEspanol[date.Month - 1]}";
+
+    /// <summary>
+    /// Devuelve el prefijo del archivo del día sin el número de sufijo (_1, _2…).
+    /// Ej: patrón "CustomBackup_{M}_{d}_{yyyy}_1.bak" → "CustomBackup_4_28_2026_"
+    /// </summary>
+    internal static string BuildDayPrefix(string pattern, DateTime date)
+    {
+        var withDate = pattern
+            .Replace("{M}",    date.Month.ToString())
+            .Replace("{d}",    date.Day.ToString())
+            .Replace("{yyyy}", date.Year.ToString());
+
+        var dotIdx = withDate.LastIndexOf('.');
+        var nameNoExt = dotIdx >= 0 ? withDate[..dotIdx] : withDate;
+        var lastUnderscore = nameNoExt.LastIndexOf('_');
+        return lastUnderscore >= 0 ? nameNoExt[..(lastUnderscore + 1)] : nameNoExt + "_";
+    }
 
     private static string ResolveMimeType(string fileName) =>
         Path.GetExtension(fileName).ToLowerInvariant() switch

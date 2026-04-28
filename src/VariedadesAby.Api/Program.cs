@@ -209,4 +209,9 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+// Endpoint público para keep-alive (UptimeRobot u otro monitor externo)
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }))
+   .AllowAnonymous()
+   .ExcludeFromDescription();
+
 app.Run();

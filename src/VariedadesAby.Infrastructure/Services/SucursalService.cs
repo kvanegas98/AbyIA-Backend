@@ -19,20 +19,20 @@ public class SucursalService : ISucursalService
     public async Task<IEnumerable<RendimientoSucursalDto>> GetRendimientoAsync(
         DateTime fechaDesde, DateTime fechaHasta)
     {
-        var dias              = (fechaHasta.Date - fechaDesde.Date).Days;
+        var dias              = (fechaHasta.Date - fechaDesde.Date).Days + 1;
         var fechaInicioAnterior = fechaDesde.Date.AddDays(-dias);
 
         const string sql = @"
             WITH VentasPorSucursal AS (
                 SELECT
                     v.IdSucursal,
-                    COUNT(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora <= @fechaHasta
+                    COUNT(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora < @fechaHasta
                                THEN v.idventa END)                                   AS totalVentas,
-                    ROUND(SUM(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora <= @fechaHasta
+                    ROUND(SUM(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora < @fechaHasta
                                    THEN v.total ELSE 0 END), 2)                      AS ventaTotal,
-                    ROUND(SUM(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora <= @fechaHasta
+                    ROUND(SUM(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora < @fechaHasta
                                    THEN v.utilidad ELSE 0 END), 2)                   AS utilidadTotal,
-                    ROUND(AVG(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora <= @fechaHasta
+                    ROUND(AVG(CASE WHEN v.fecha_hora >= @fechaDesde AND v.fecha_hora < @fechaHasta
                                    THEN v.total END), 2)                             AS ticketPromedio,
                     ROUND(SUM(CASE WHEN v.fecha_hora >= @fechaInicioAnterior
                                     AND v.fecha_hora <  @fechaDesde
@@ -40,7 +40,7 @@ public class SucursalService : ISucursalService
                 FROM dbo.venta v WITH (NOLOCK)
                 WHERE v.estado     != 'Anulado'
                   AND v.fecha_hora >= @fechaInicioAnterior
-                  AND v.fecha_hora <= @fechaHasta
+                  AND v.fecha_hora <  @fechaHasta
                 GROUP BY v.IdSucursal
             ),
             UnidadesPorSucursal AS (
@@ -51,7 +51,7 @@ public class SucursalService : ISucursalService
                 INNER JOIN dbo.detalle_venta dv WITH (NOLOCK) ON dv.idventa = v.idventa
                 WHERE v.estado     != 'Anulado'
                   AND v.fecha_hora >= @fechaDesde
-                  AND v.fecha_hora <= @fechaHasta
+                  AND v.fecha_hora <  @fechaHasta
                 GROUP BY v.IdSucursal
             )
             SELECT
@@ -71,7 +71,7 @@ public class SucursalService : ISucursalService
         var raw = await _db.QueryAsync<RendimientoSucursalDto>(sql, new
         {
             fechaDesde          = fechaDesde.Date,
-            fechaHasta          = fechaHasta.Date.AddDays(1).AddSeconds(-1),
+            fechaHasta          = fechaHasta.Date.AddDays(1),
             fechaInicioAnterior
         });
 
@@ -113,14 +113,14 @@ public class SucursalService : ISucursalService
                 ON v.IdSucursal  = s.idsucursal
                AND v.estado     != 'Anulado'
                AND v.fecha_hora >= @fechaDesde
-               AND v.fecha_hora <= @fechaHasta
+               AND v.fecha_hora <  @fechaHasta
             GROUP BY s.idsucursal, s.nombre, CAST(v.fecha_hora AS DATE)
             ORDER BY s.nombre, fecha";
 
         return await _db.QueryAsync<TendenciaSucursalDto>(sql, new
         {
             fechaDesde = fechaDesde.Date,
-            fechaHasta = fechaHasta.Date.AddDays(1).AddSeconds(-1)
+            fechaHasta = fechaHasta.Date.AddDays(1)
         });
     }
 
@@ -272,7 +272,7 @@ public class SucursalService : ISucursalService
                     ON v.IdSucursal  = s.idsucursal
                    AND v.estado     != 'Anulado'
                    AND v.fecha_hora >= @fechaDesde
-                   AND v.fecha_hora <= @fechaHasta
+                   AND v.fecha_hora <  @fechaHasta
                 INNER JOIN dbo.detalle_venta dv WITH (NOLOCK) ON dv.idventa    = v.idventa
                 INNER JOIN dbo.articulo      a  WITH (NOLOCK) ON a.idarticulo  = dv.idarticulo
                 LEFT  JOIN dbo.categoria     cat WITH (NOLOCK) ON cat.idcategoria = a.idcategoria
@@ -293,7 +293,7 @@ public class SucursalService : ISucursalService
         return await _db.QueryAsync<TopProductoSucursalDto>(sql, new
         {
             fechaDesde = fechaDesde.Date,
-            fechaHasta = fechaHasta.Date.AddDays(1).AddSeconds(-1),
+            fechaHasta = fechaHasta.Date.AddDays(1),
             top
         });
     }

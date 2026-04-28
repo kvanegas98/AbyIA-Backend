@@ -55,8 +55,7 @@ public sealed class ReporteDiarioService : IReporteDiarioService
                 COUNT(v.idventa)                                                                     AS TotalVentas,
                 ISNULL(SUM(v.total), 0)                                                              AS TotalGlobal
             FROM dbo.sucursal s WITH (NOLOCK)
-            LEFT JOIN dbo.usuario u WITH (NOLOCK) ON u.idsucursal = s.idsucursal
-            LEFT JOIN dbo.venta   v WITH (NOLOCK) ON v.idusuario  = u.idusuario
+            LEFT JOIN dbo.venta v WITH (NOLOCK) ON v.IdSucursal = s.idsucursal
                 AND CAST(v.fecha_hora AS DATE) = @Hoy
                 AND v.estado != 'Anulado'
             GROUP BY s.idsucursal, s.nombre

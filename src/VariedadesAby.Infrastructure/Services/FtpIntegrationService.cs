@@ -26,9 +26,10 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
 
     public async Task<(MemoryStream Stream, string FileName)> DownloadFileAsync(CancellationToken ct = default)
     {
-        var (remotePath, fileName) = BuildTodayFilePath();
+        var today = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
+        var prefix = BuildTodayPrefix(today);
 
-        _logger.LogInformation("[FTP] Descargando '{File}' desde {Host}:{Port}", fileName, _settings.Host, _settings.Port);
+        _logger.LogInformation("[FTP] Buscando archivos con prefijo '{Prefix}' en {Host}:{Port}", prefix, _settings.Host, _settings.Port);
 
         var client = new AsyncFtpClient(_settings.Host, _settings.Username, _settings.Password, _settings.Port);
 
@@ -41,11 +42,29 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
             await client.Connect(ct);
             _logger.LogInformation("[FTP] Conexión Explicit TLS establecida con {Host}", _settings.Host);
 
+            var remoteDir = _settings.RemoteDirectory.TrimEnd('/');
+            var listing = await client.GetListing(remoteDir, token: ct);
+
+            // Tomar el archivo .bak del día con el número de sufijo más alto (_1, _2, _3…)
+            var fileName = listing
+                .Where(f => f.Type == FluentFTP.FtpObjectType.File
+                         && f.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                         && f.Name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                .Select(f => f.Name)
+                .OrderByDescending(n => n)
+                .FirstOrDefault()
+                ?? throw new FtpException(
+                    $"No se encontró ningún archivo que empiece con '{prefix}' en '{remoteDir}'. " +
+                    "Verifica que el backup del día ya haya sido generado.");
+
+            var remotePath = $"{remoteDir}/{fileName}";
+            _logger.LogInformation("[FTP] Archivo seleccionado: '{File}'", fileName);
+
             var ms = new MemoryStream();
             var downloaded = await client.DownloadStream(ms, remotePath, token: ct);
 
             if (!downloaded)
-                throw new FtpException($"El servidor FTP no encontró el archivo '{remotePath}'. Verifica que el backup del día ya haya sido generado.");
+                throw new FtpException($"El servidor FTP no pudo descargar '{remotePath}'.");
 
             ms.Position = 0;
             _logger.LogInformation("[FTP] '{File}' descargado en memoria. Tamaño: {Size:N0} bytes", fileName, ms.Length);
@@ -59,7 +78,7 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
         }
         catch (FtpException ex)
         {
-            _logger.LogError(ex, "[FTP] Error de protocolo al descargar '{File}'.", fileName);
+            _logger.LogError(ex, "[FTP] Error de protocolo al descargar archivo del día.");
             throw;
         }
         finally
@@ -69,24 +88,6 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
         }
     }
 
-    /// <summary>
-    /// Construye la ruta remota y el nombre del archivo para el día actual usando
-    /// los placeholders configurados en <see cref="FtpSettings.FileNamePattern"/>.
-    /// Ej: /db/db_ab0a55_variedadesaby/CustomBackup_db_ab0a55_variedadesaby_4_7_2026_1.bak
-    /// </summary>
-    private (string RemotePath, string FileName) BuildTodayFilePath()
-    {
-        var today = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
-
-        var fileName = _settings.FileNamePattern
-            .Replace("{M}",    today.Month.ToString())
-            .Replace("{d}",    today.Day.ToString())
-            .Replace("{yyyy}", today.Year.ToString());
-
-        var remotePath = $"{_settings.RemoteDirectory.TrimEnd('/')}/{fileName}";
-
-        _logger.LogDebug("[FTP] Ruta construida para hoy ({Date}): {Path}", today.ToString("yyyy-MM-dd"), remotePath);
-
-        return (remotePath, fileName);
-    }
+    private string BuildTodayPrefix(DateTime today) =>
+        GoogleDriveIntegrationService.BuildDayPrefix(_settings.FileNamePattern, today);
 }
