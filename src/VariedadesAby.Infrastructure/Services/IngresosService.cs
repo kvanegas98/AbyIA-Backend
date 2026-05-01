@@ -1039,7 +1039,7 @@ public class IngresosService : IIngresosService
                         });
                         c.Item().BorderBottom(1).BorderColor("#e0e0e0").PaddingVertical(4).Row(r =>
                         {
-                            r.RelativeItem().Text($"IVA ({detalle.impuesto:P0}):");
+                            r.RelativeItem().Text($"Impuesto ({detalle.impuesto:P0}):");
                             r.ConstantItem(100).AlignRight().Text($"C$ {detalle.totalImpuesto:N2}");
                         });
                         c.Item().PaddingTop(4).Row(r =>

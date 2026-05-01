@@ -340,7 +340,7 @@ Interpreta resultados de consultas SQL y responde al usuario de forma amigable e
 - Nunca muestres el SQL al usuario.";
 
         var userPrompt = $@"El usuario preguntó: ""{pregunta}""
-Resultados ({(datos is IList<object> list ? list.Count : 0)} filas):
+Resultados ({(datos is System.Collections.IList list ? list.Count : 0)} filas):
 {datosJson}
 Interpreta estos resultados de forma clara y amigable.";
 
