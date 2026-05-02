@@ -38,4 +38,10 @@ public class AnalisisInventarioProveedorDto
     public string recomendacion { get; set; } = string.Empty;
     /// <summary>Color semáforo: verde, amarillo, rojo, negro</summary>
     public string semaforo { get; set; } = string.Empty;
+
+    // ── Distribución por semáforo (solo productos con stock) ─────────────────
+    public int productosVerde    { get; set; }  // Fresco   <= 15 días
+    public int productosAmarillo { get; set; }  // Lento    16-45 días
+    public int productosRojo     { get; set; }  // Dormido  46-90 días
+    public int productosNegro    { get; set; }  // Muerto   > 90 días
 }

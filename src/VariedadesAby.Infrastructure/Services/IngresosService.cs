@@ -376,12 +376,27 @@ public class IngresosService : IIngresosService
                     ROUND(SUM(ISNULL(v.totalVendido, 0) * c.precioPromedio), 2)   AS valorRecuperado,
                     ROUND(
                         CASE WHEN SUM(c.totalComprado) > 0
-                        THEN SUM(ISNULL(v.totalVendido, 0)) * 100.0 / SUM(c.totalComprado)
+                        THEN CASE WHEN SUM(ISNULL(v.totalVendido, 0)) >= SUM(c.totalComprado)
+                                  THEN 100.0
+                                  ELSE SUM(ISNULL(v.totalVendido, 0)) * 100.0 / SUM(c.totalComprado)
+                             END
                         ELSE 0 END, 1)                                             AS porcentajeRotacion,
                     MAX(c.ultimaCompraArticulo)                                    AS ultimaCompra,
                     AVG(CASE WHEN ISNULL(s.stockTotal, 0) > 0
                              THEN DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE())
-                             END)                                                  AS diasSinMovimientoPromedio
+                             END)                                                  AS diasSinMovimientoPromedio,
+                    COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
+                        AND DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE()) <= 15
+                        THEN c.idarticulo END)                                     AS productosVerde,
+                    COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
+                        AND DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE()) BETWEEN 16 AND 45
+                        THEN c.idarticulo END)                                     AS productosAmarillo,
+                    COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
+                        AND DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE()) BETWEEN 46 AND 90
+                        THEN c.idarticulo END)                                     AS productosRojo,
+                    COUNT(DISTINCT CASE WHEN ISNULL(s.stockTotal,0) > 0
+                        AND DATEDIFF(DAY, COALESCE(uv.ultimaVenta, c.ultimaCompraArticulo), GETDATE()) > 90
+                        THEN c.idarticulo END)                                     AS productosNegro
                 FROM persona p WITH (NOLOCK)
                 INNER JOIN ComprasPorProveedorArticulo c ON c.idproveedor = p.idpersona
                 LEFT  JOIN StockPorArticulo         s  ON s.idarticulo  = c.idarticulo
@@ -462,8 +477,9 @@ public class IngresosService : IIngresosService
             "rotacionasc"  => "ORDER BY porcentajeRotacion ASC,  diasSinMovimiento DESC",
             "rotaciondesc" => "ORDER BY porcentajeRotacion DESC, diasSinMovimiento ASC",
             "valordesc"    => "ORDER BY valorStockActual DESC,   diasSinMovimiento DESC",
+            "diasdesc"     => "ORDER BY diasSinMovimiento DESC,  valorStockActual DESC",
             "nombreasc"    => "ORDER BY articulo ASC",
-            _              => "ORDER BY diasSinMovimiento DESC, valorStockActual DESC"
+            _              => "ORDER BY valorStockActual DESC, diasSinMovimiento DESC"
         };
 
         var sqlCount = $@"
@@ -507,8 +523,9 @@ public class IngresosService : IIngresosService
             "rotacionasc"  => "ORDER BY porcentajeRotacion ASC,  diasSinMovimiento DESC",
             "rotaciondesc" => "ORDER BY porcentajeRotacion DESC, diasSinMovimiento ASC",
             "valordesc"    => "ORDER BY valorStockActual DESC,   diasSinMovimiento DESC",
+            "diasdesc"     => "ORDER BY diasSinMovimiento DESC,  valorStockActual DESC",
             "nombreasc"    => "ORDER BY articulo ASC",
-            _              => "ORDER BY diasSinMovimiento DESC, valorStockActual DESC"
+            _              => "ORDER BY valorStockActual DESC, diasSinMovimiento DESC"
         };
 
         var sqlData = $@"
@@ -601,7 +618,10 @@ public class IngresosService : IIngresosService
                     ISNULL(s.stockTotal, 0)                                             AS stockActual,
                     ISNULL(v.totalVendido, 0)                                           AS unidadesVendidas,
                     ROUND(CASE WHEN c.totalComprado > 0
-                          THEN ISNULL(v.totalVendido, 0) * 100.0 / c.totalComprado
+                          THEN CASE WHEN ISNULL(v.totalVendido, 0) >= c.totalComprado
+                                    THEN 100.0
+                                    ELSE ISNULL(v.totalVendido, 0) * 100.0 / c.totalComprado
+                               END
                           ELSE 0 END, 1)                                                AS porcentajeRotacion,
                     c.precioPromedio                                                    AS precioCompra,
                     a.precio_venta                                                      AS precioVenta,
