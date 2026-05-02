@@ -47,7 +47,7 @@ public class AuthController : ControllerBase
         if (!VerificarPasswordHash(model.password, usuario.password_hash, usuario.password_salt))
             return Unauthorized(new { mensaje = "Credenciales incorrectas." });
 
-        string[] rolesPermitidos = ["Administrador", "Gestor de Operaciones"];
+        string[] rolesPermitidos = ["Administrador", "Gestor de Operaciones", "Vendedor-Cobrador"];
         if (!rolesPermitidos.Contains(usuario.rolNombre))
             return Unauthorized(new { mensaje = "No tienes permiso para acceder a este sistema." });
 
