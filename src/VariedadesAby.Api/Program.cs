@@ -45,6 +45,12 @@ builder.Services.AddScoped<IAnalisisService, AnalisisService>();
 // --- Servicio: Panel de Vendedores ---
 builder.Services.AddScoped<IVendedoresService, VendedoresService>();
 
+// --- Servicio: Módulo Ventas ---
+builder.Services.AddScoped<IVentasService, VentasService>();
+
+// --- Servicio: Módulo Usuario-Sucursal ---
+builder.Services.AddScoped<IUsuarioSucursalService, UsuarioSucursalService>();
+
 // --- Servicio: Módulo Sucursal ---
 builder.Services.AddScoped<ISucursalService, SucursalService>();
 

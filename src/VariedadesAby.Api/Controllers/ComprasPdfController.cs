@@ -22,7 +22,8 @@ public class ComprasPdfController : ControllerBase
     /// Retorna un objeto listo para enviarse al endpoint Crear de compras.
     /// </summary>
     [HttpPost("[action]")]
-    [RequestSizeLimit(10_485_760)] // 10 MB
+    [RequestSizeLimit(52_428_800)] // 50 MB
+    [RequestFormLimits(MultipartBodyLengthLimit = 52_428_800)]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> AnalizarPdf(
         [FromForm] IFormFile archivo,
