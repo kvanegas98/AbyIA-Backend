@@ -17,14 +17,13 @@ public class VentasController : ControllerBase
         _service = service;
     }
 
-    // PUT: api/Ventas/Anular/5/1
-    [HttpPut("[action]/{id}/{sucursalId}")]
+    // PUT: api/Ventas/Anular/5
+    [HttpPut("[action]/{id}")]
     public async Task<IActionResult> Anular(
         [FromRoute] int id,
-        [FromRoute] int sucursalId,
         [FromBody] AnularVentaRequestDto dto)
     {
-        if (id <= 0 || sucursalId <= 0)
+        if (id <= 0)
             return BadRequest(new { mensaje = "Parámetros inválidos." });
 
         if (string.IsNullOrWhiteSpace(dto.Motivo))
@@ -35,7 +34,7 @@ public class VentasController : ControllerBase
 
         try
         {
-            await _service.AnularAsync(id, sucursalId, dto);
+            await _service.AnularAsync(id, dto);
             return Ok(new { mensaje = "Venta anulada correctamente." });
         }
         catch (KeyNotFoundException ex)

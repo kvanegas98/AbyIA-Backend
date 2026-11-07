@@ -17,7 +17,7 @@ public class VentasService : IVentasService
     // ──────────────────────────────────────────────────────────────
     // ANULAR VENTA
     // ──────────────────────────────────────────────────────────────
-    public async Task AnularAsync(int idVenta, int idSucursal, AnularVentaRequestDto dto)
+    public async Task AnularAsync(int idVenta, AnularVentaRequestDto dto)
     {
         if (_db.State != ConnectionState.Open)
             _db.Open();
@@ -25,8 +25,9 @@ public class VentasService : IVentasService
         using var tx = _db.BeginTransaction();
         try
         {
+            // idsucursal viene de la propia factura, nunca del parámetro externo
             var venta = await _db.QueryFirstOrDefaultAsync<VentaAnulacion>(
-                "SELECT idventa, estado, IdCredito, CodigoFactura FROM dbo.venta WITH (NOLOCK) WHERE idventa = @id",
+                "SELECT idventa, estado, IdCredito, CodigoFactura, idsucursal AS IdSucursal FROM dbo.venta WITH (NOLOCK) WHERE idventa = @id",
                 new { id = idVenta }, tx);
 
             if (venta is null)
@@ -61,13 +62,13 @@ public class VentasService : IVentasService
                     @"UPDATE dbo.sucursalArticulo
                       SET stock = stock + @cantidad
                       WHERE idarticulo = @idArticulo AND idsucursal = @idSucursal",
-                    new { det.Cantidad, det.IdArticulo, idSucursal }, tx);
+                    new { det.Cantidad, det.IdArticulo, venta.IdSucursal }, tx);
             }
 
             await _db.ExecuteAsync(
                 @"INSERT INTO dbo.AnulacionVenta (IdVenta, IdUsuario, IdSucursal, Motivo)
                   VALUES (@idVenta, @idUsuario, @idSucursal, @motivo)",
-                new { idVenta, dto.IdUsuario, idSucursal, dto.Motivo }, tx);
+                new { idVenta, dto.IdUsuario, idSucursal = venta.IdSucursal, dto.Motivo }, tx);
 
             tx.Commit();
         }
@@ -85,6 +86,9 @@ public class VentasService : IVentasService
     {
         filtro.TamanoPagina = Math.Clamp(filtro.TamanoPagina, 1, 100);
         filtro.Pagina = Math.Max(filtro.Pagina, 1);
+        // Sin filtro de fecha: solo últimos 60 días para evitar escaneos completos
+        if (filtro.FechaDesde is null && filtro.FechaHasta is null)
+            filtro.FechaDesde = DateTime.Today.AddDays(-60);
         var offset = (filtro.Pagina - 1) * filtro.TamanoPagina;
 
         const string sql = """
@@ -358,7 +362,7 @@ public class VentasService : IVentasService
     }
 
     // ── Tipos internos para mapeo Dapper ──────────────────────────
-    private sealed record VentaAnulacion(int Idventa, string Estado, int? IdCredito, string CodigoFactura);
+    private sealed record VentaAnulacion(int Idventa, string Estado, int? IdCredito, string CodigoFactura, int IdSucursal);
     private sealed record DetalleStock(int IdArticulo, int Cantidad);
 
     private sealed record ProductoLineaRaw(

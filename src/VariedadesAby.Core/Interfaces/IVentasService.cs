@@ -4,7 +4,7 @@ namespace VariedadesAby.Core.Interfaces;
 
 public interface IVentasService
 {
-    Task AnularAsync(int idVenta, int idSucursal, AnularVentaRequestDto dto);
+    Task AnularAsync(int idVenta, AnularVentaRequestDto dto);
     Task<BuscarVentasResponseDto> BuscarAsync(BuscarVentasQueryDto filtro);
     Task<VentaDetalleDto> ObtenerDetalleAsync(int idVenta);
     Task<IEnumerable<ArticuloResumenDto>> BuscarArticulosAsync(string termino);
