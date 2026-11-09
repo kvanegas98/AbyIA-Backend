@@ -93,16 +93,18 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
 
     public async Task<EstadoBackupDto> ObtenerEstadoBackupAsync(CancellationToken ct = default)
     {
-        var now = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
+        // Buscar primero el backup de hoy; si no existe, aceptar el de ayer
+        var hoy  = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
+        var ayer = hoy.AddDays(-1);
 
-        // Prefijo del día sin el número de sufijo (_1, _2…) para buscar en Drive
-        var prefixHoy = BuildDayPrefix(_ftpSettings.FileNamePattern, now);
+        var prefixHoy  = BuildDayPrefix(_ftpSettings.FileNamePattern, hoy);
+        var prefixAyer = BuildDayPrefix(_ftpSettings.FileNamePattern, ayer);
 
-        // Nombre canónico para mostrar en el DTO (igual que antes, con _1)
+        // archivoHoy muestra el nombre esperado para el backup de hoy
         var archivoHoy = _ftpSettings.FileNamePattern
-            .Replace("{M}",    now.Month.ToString())
-            .Replace("{d}",    now.Day.ToString())
-            .Replace("{yyyy}", now.Year.ToString());
+            .Replace("{M}",    hoy.Month.ToString())
+            .Replace("{d}",    hoy.Day.ToString())
+            .Replace("{yyyy}", hoy.Year.ToString());
 
         UserCredential credential;
         try
@@ -122,7 +124,7 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
                 ApplicationName = _settings.ApplicationName
             });
 
-            // ── Último .bak subido (sin restricción de carpeta — in ancestors no existe en Drive API v3) ──
+            // ── Último .bak subido (sin restricción de carpeta) ──
             var lastReq = service.Files.List();
             lastReq.Q = "mimeType != 'application/vnd.google-apps.folder' " +
                         "AND name contains '.bak' " +
@@ -134,14 +136,10 @@ public sealed class GoogleDriveIntegrationService : IGoogleDriveIntegrationServi
             var lastResult = await lastReq.ExecuteAsync(ct);
             var lastFile   = lastResult.Files.FirstOrDefault();
 
-            // ── ¿Existe ya algún backup de hoy? (busca por prefijo para cubrir _1, _2…) ──
-            var todayReq = service.Files.List();
-            todayReq.Q = $"name contains '{prefixHoy}' AND name contains '.bak' AND trashed=false";
-            todayReq.Fields   = "files(id)";
-            todayReq.PageSize = 1;
-
-            var todayResult = await todayReq.ExecuteAsync(ct);
-            var yaExisteHoy = todayResult.Files.Count > 0;
+            // yaExisteHoy = el backup más reciente en Drive corresponde a hoy o a ayer
+            var yaExisteHoy = lastFile?.Name != null &&
+                (lastFile.Name.Contains(prefixHoy,  StringComparison.OrdinalIgnoreCase) ||
+                 lastFile.Name.Contains(prefixAyer, StringComparison.OrdinalIgnoreCase));
 
             DateTime? fechaSubidaLocal = null;
             if (lastFile?.CreatedTimeDateTimeOffset is { } createdOffset)

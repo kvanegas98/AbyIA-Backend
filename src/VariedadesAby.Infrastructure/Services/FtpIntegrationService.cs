@@ -26,10 +26,10 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
 
     public async Task<(MemoryStream Stream, string FileName)> DownloadFileAsync(CancellationToken ct = default)
     {
-        var today = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
-        var prefix = BuildTodayPrefix(today);
+        var nowLocal = TimeZoneHelper.NowIn(_schedulerSettings.TimeZoneId);
 
-        _logger.LogInformation("[FTP] Buscando archivos con prefijo '{Prefix}' en {Host}:{Port}", prefix, _settings.Host, _settings.Port);
+        // Intentar primero con la fecha de hoy; si no hay archivo, caer al día anterior
+        var candidatos = new[] { nowLocal, nowLocal.AddDays(-1) };
 
         var client = new AsyncFtpClient(_settings.Host, _settings.Username, _settings.Password, _settings.Port);
 
@@ -45,31 +45,42 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
             var remoteDir = _settings.RemoteDirectory.TrimEnd('/');
             var listing = await client.GetListing(remoteDir, token: ct);
 
-            // Tomar el archivo .bak del día con el número de sufijo más alto (_1, _2, _3…)
-            var fileName = listing
-                .Where(f => f.Type == FluentFTP.FtpObjectType.File
-                         && f.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                         && f.Name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
-                .Select(f => f.Name)
-                .OrderByDescending(n => n)
-                .FirstOrDefault()
-                ?? throw new FtpException(
-                    $"No se encontró ningún archivo que empiece con '{prefix}' en '{remoteDir}'. " +
-                    "Verifica que el backup del día ya haya sido generado.");
+            foreach (var fecha in candidatos)
+            {
+                var prefix = BuildPrefixForDate(fecha);
 
-            var remotePath = $"{remoteDir}/{fileName}";
-            _logger.LogInformation("[FTP] Archivo seleccionado: '{File}'", fileName);
+                // Tomar el .bak con el número de sufijo más alto (_1, _2, _3, _4…)
+                var fileName = listing
+                    .Where(f => f.Type == FluentFTP.FtpObjectType.File
+                             && f.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                             && f.Name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.Name)
+                    .OrderByDescending(n => n)
+                    .FirstOrDefault();
 
-            var ms = new MemoryStream();
-            var downloaded = await client.DownloadStream(ms, remotePath, token: ct);
+                if (fileName is null)
+                {
+                    _logger.LogWarning("[FTP] No hay archivo con prefijo '{Prefix}' ({Fecha:yyyy-MM-dd}), probando día anterior.", prefix, fecha);
+                    continue;
+                }
 
-            if (!downloaded)
-                throw new FtpException($"El servidor FTP no pudo descargar '{remotePath}'.");
+                var remotePath = $"{remoteDir}/{fileName}";
+                _logger.LogInformation("[FTP] Archivo seleccionado: '{File}' (fecha {Fecha:yyyy-MM-dd})", fileName, fecha);
 
-            ms.Position = 0;
-            _logger.LogInformation("[FTP] '{File}' descargado en memoria. Tamaño: {Size:N0} bytes", fileName, ms.Length);
+                var ms = new MemoryStream();
+                var downloaded = await client.DownloadStream(ms, remotePath, token: ct);
 
-            return (ms, fileName);
+                if (!downloaded)
+                    throw new FtpException($"El servidor FTP no pudo descargar '{remotePath}'.");
+
+                ms.Position = 0;
+                _logger.LogInformation("[FTP] '{File}' descargado en memoria. Tamaño: {Size:N0} bytes", fileName, ms.Length);
+                return (ms, fileName);
+            }
+
+            throw new FtpException(
+                $"No se encontró ningún archivo .bak para hoy ({nowLocal:yyyy-MM-dd}) " +
+                $"ni para ayer ({nowLocal.AddDays(-1):yyyy-MM-dd}) en '{remoteDir}'.");
         }
         catch (FtpAuthenticationException ex)
         {
@@ -88,6 +99,6 @@ public sealed class FtpIntegrationService : IFtpIntegrationService
         }
     }
 
-    private string BuildTodayPrefix(DateTime today) =>
-        GoogleDriveIntegrationService.BuildDayPrefix(_settings.FileNamePattern, today);
+    private string BuildPrefixForDate(DateTime date) =>
+        GoogleDriveIntegrationService.BuildDayPrefix(_settings.FileNamePattern, date);
 }

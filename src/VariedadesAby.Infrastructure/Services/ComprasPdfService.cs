@@ -65,7 +65,15 @@ public class ComprasPdfService : IComprasPdfService
         var pdfBytes = ms.ToArray();
 
         // 2. Convertir páginas del PDF a imágenes JPEG
-        var imagenesBytes = ConvertirPdfAImagenes(pdfBytes);
+        List<byte[]> imagenesBytes;
+        try
+        {
+            imagenesBytes = ConvertirPdfAImagenes(pdfBytes);
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException($"Error al procesar el PDF: {ex.Message}", ex);
+        }
 
         if (imagenesBytes.Count == 0)
             throw new InvalidOperationException("No se pudieron extraer imágenes del PDF.");
@@ -485,7 +493,10 @@ public class ComprasPdfService : IComprasPdfService
                 modelo, maxIntentos);
         }
 
-        throw ultimaExcepcion ?? new InvalidOperationException("Todos los modelos de Gemini fallaron al procesar el PDF.");
+        var mensajeError = ultimaExcepcion?.Message ?? "Error desconocido";
+        throw new InvalidOperationException(
+            $"Todos los modelos de Gemini fallaron al procesar el PDF. Detalle: {mensajeError}",
+            ultimaExcepcion);
     }
 
     private async Task<(bool Exito, T? Valor, Exception? Excepcion)> IntentarConModeloAsync<T>(

@@ -7,14 +7,10 @@ namespace VariedadesAby.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-public class ComprasPdfController : ControllerBase
+public class ComprasPdfController(IComprasPdfService service, ILogger<ComprasPdfController> logger) : ControllerBase
 {
-    private readonly IComprasPdfService _service;
-
-    public ComprasPdfController(IComprasPdfService service)
-    {
-        _service = service;
-    }
+    private readonly IComprasPdfService _service = service;
+    private readonly ILogger<ComprasPdfController> _logger = logger;
 
     /// <summary>
     /// Recibe un PDF de factura de proveedor, lo convierte a imágenes (guardadas en Cloudinary),
@@ -56,6 +52,12 @@ public class ComprasPdfController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { mensaje = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error inesperado al analizar PDF.");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { mensaje = $"Error inesperado: {ex.Message}" });
         }
     }
 
